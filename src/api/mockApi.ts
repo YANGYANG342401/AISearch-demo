@@ -1,17 +1,20 @@
 // ─── Mock 实现：种子数据来自 UAT 真实响应样本，行为对齐真实接口 ────────
 
 import type { ApiClient } from './index';
-import { channels, departments, groups, managers, seedProducts } from './fixtures';
+import { channels, departments, groups, seedProducts } from './fixtures';
 import type { FeatureCode, ProductRow, ProductStatus } from '../types';
 
 // 50 条真实样本 → 合成到 116 条（与 UAT 数据量一致）
 function buildStore(): ProductRow[] {
   const store = [...seedProducts];
   const variants = ['PLUS', 'MAX', 'Lite', 'Pro', 'Mini', '旗舰版', '标准版', '体验版'];
+  const managerNames = [...new Set(seedProducts.flatMap(p => p.ProductManagerList.map(m => m.Name)))];
   for (let i = seedProducts.length; i < 116; i++) {
     const base = seedProducts[i % seedProducts.length];
     const v = variants[Math.floor(i / seedProducts.length) % variants.length];
     const status: ProductStatus = i % 4 === 0 ? 'PullOffShelves' : 'PutOnShelves';
+    const mgr = managerNames[i % managerNames.length];
+    const grp = groups[i % groups.length];
     store.push({
       ...base,
       ID: `mock${String(i).padStart(19, '0')}`,
@@ -19,12 +22,12 @@ function buildStore(): ProductRow[] {
       Status: status,
       MusearchShow: i % 3 !== 0,
       ChannelID: base.ChannelID.slice(0, Math.max(1, (i % 5) + 1)),
-      ProductManagerList: [managers[i % managers.length]],
-      ProductManagerName: managers[i % managers.length].Name,
+      ProductManagerList: [{ ID: mgr, Name: mgr }],
+      ProductManagerName: mgr,
       DepartmentID: departments[i % departments.length].ID,
       DepartmentName: departments[i % departments.length].Name,
-      ProductGroupID: groups[i % groups.length].ID,
-      ProductGroupName: groups[i % groups.length].Name,
+      ProductGroupID: '',
+      ProductGroupName: grp.Name,
     });
   }
   return store;
@@ -60,7 +63,7 @@ export const mockApi: ApiClient = {
     if (q) rows = rows.filter(p =>
       p.ProductName.toLowerCase().includes(q) || p.Description.toLowerCase().includes(q));
     if (params.status) rows = rows.filter(p => p.Status === params.status);
-    if (params.productGroupID) rows = rows.filter(p => p.ProductGroupID === params.productGroupID);
+    if (params.productGroupName) rows = rows.filter(p => p.ProductGroupName === params.productGroupName);
     if (params.departmentID) rows = rows.filter(p => p.DepartmentID === params.departmentID);
     if (params.productManagerName) rows = rows.filter(p =>
       p.ProductManagerName.includes(params.productManagerName));
@@ -148,8 +151,21 @@ export const mockApi: ApiClient = {
 
   async getChannels() { await latency(); return channels; },
   async getDepartments() { await latency(); return departments; },
-  async getGroups() { await latency(); return groups; },
-  async getManagers() { await latency(); return managers; },
+  // 标签化：选项从产品数据 distinct，字典表不再是数据源
+  async getGroupNames() {
+    await latency();
+    const names = [...new Set(store.map(p => p.ProductGroupName).filter((n): n is string => !!n))];
+    return names.sort((a, b) => a.localeCompare(b, 'zh-Hans-CN'));
+  },
+  async getManagerNames() {
+    await latency();
+    const names = new Set<string>();
+    for (const p of store) {
+      for (const m of p.ProductManagerList ?? []) names.add(m.Name);
+      p.ProductManagerName.split(',').forEach(n => n.trim() && names.add(n.trim()));
+    }
+    return [...names].sort((a, b) => a.localeCompare(b, 'zh-Hans-CN'));
+  },
   async getFeatureCodes() {
     await latency();
     return [

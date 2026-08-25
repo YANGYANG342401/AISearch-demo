@@ -57,7 +57,7 @@ export interface ProductRow {
 export interface QueryParams {
   productName: string;
   status: ProductStatus | null;
-  productGroupID: string;
+  productGroupName: string;
   productManagerName: string;
   departmentID: string;
   channelIDAry: string[];

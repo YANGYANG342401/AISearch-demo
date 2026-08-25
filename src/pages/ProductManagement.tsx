@@ -11,7 +11,7 @@ import { ProductTable } from '../components/ProductTable';
 import { DeletePasswordModal, ProductDrawer } from '../components/ProductDrawer';
 import { FilterBar } from '../components/FilterBar';
 import type {
-  Channel, Department, FeatureCode, ProductGroup, ProductManager,
+  Channel, Department, FeatureCode,
   ProductRow, QueryParams, Stats,
 } from '../types';
 import { palette } from '../theme';
@@ -19,7 +19,7 @@ import { palette } from '../theme';
 // ─── 产品管理页：筛选 → 列表 → 增删改，行为对齐原版 ────────────────────
 
 const DEFAULT_PARAMS: QueryParams = {
-  productName: '', status: null, productGroupID: '', productManagerName: '',
+  productName: '', status: null, productGroupName: '', productManagerName: '',
   departmentID: '', channelIDAry: [], sortField: 'ProductName', sortDirection: 'Asc',
   pageSize: 50, pageIndex: 0,
 };
@@ -33,8 +33,8 @@ export function ProductManagement() {
   const [loading, setLoading] = useState(true);
   const [options, setOptions] = useState<{
     channels: Channel[]; departments: Department[];
-    groups: ProductGroup[]; managers: ProductManager[];
-  }>({ channels: [], departments: [], groups: [], managers: [] });
+    groupNames: string[]; managerNames: string[];
+  }>({ channels: [], departments: [], groupNames: [], managerNames: [] });
   const [features, setFeatures] = useState<FeatureCode[]>([]);
   const [isAdmin, setIsAdmin] = useState(true);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
@@ -49,11 +49,11 @@ export function ProductManagement() {
 
   useEffect(() => {
     void (async () => {
-      const [channels, departments, groups, managers, featureCodes] = await Promise.all([
-        api.getChannels(), api.getDepartments(), api.getGroups(), api.getManagers(),
+      const [channels, departments, groupNames, managerNames, featureCodes] = await Promise.all([
+        api.getChannels(), api.getDepartments(), api.getGroupNames(), api.getManagerNames(),
         api.getFeatureCodes(),
       ]);
-      setOptions({ channels, departments, groups, managers });
+      setOptions({ channels, departments, groupNames, managerNames });
       setFeatures(featureCodes);
     })();
   }, []);
@@ -93,6 +93,9 @@ export function ProductManagement() {
   const refresh = useCallback(async (keepSelection = false) => {
     await query(params);
     api.getStats().then(setStats);
+    // 标签化：新产品可能引入新的组名/人名，选项随数据刷新
+    const [groupNames, managerNames] = await Promise.all([api.getGroupNames(), api.getManagerNames()]);
+    setOptions(o => ({ ...o, groupNames, managerNames }));
     if (!keepSelection) setSelectedIds([]);
   }, [params, query]);
 
@@ -208,8 +211,8 @@ export function ProductManagement() {
           onReset={() => { setParams(DEFAULT_PARAMS); void query(DEFAULT_PARAMS); }}
           channels={options.channels}
           departments={options.departments}
-          groups={options.groups}
-          managers={options.managers}
+          groupNames={options.groupNames}
+          managerNames={options.managerNames}
         />
       </Card>
 

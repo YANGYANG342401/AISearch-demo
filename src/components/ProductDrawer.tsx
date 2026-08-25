@@ -7,7 +7,7 @@ import dayjs, { type Dayjs } from 'dayjs';
 import { useEffect, useMemo, useState } from 'react';
 import { ChannelPickerFormBlock } from './ChannelPicker';
 import type {
-  Channel, Department, ProductGroup, ProductManager, ProductRow,
+  Channel, Department, ProductRow,
 } from '../types';
 import { STATUS_TEXT } from '../types';
 import { palette } from '../theme';
@@ -20,8 +20,8 @@ const DT = 'YYYY-MM-DD HH:mm:ss';
 interface OptionData {
   channels: Channel[];
   departments: Department[];
-  groups: ProductGroup[];
-  managers: ProductManager[];
+  groupNames: string[];
+  managerNames: string[];
 }
 
 interface Props {
@@ -45,8 +45,8 @@ type FormValues = {
   OtherChannelDesc: string;
   DepartmentID: string;
   OtherDepartmentDesc: string;
-  ProductGroupID: string;
-  ProductManagerIds: string[];
+  ProductGroupName: string[];
+  ProductManagerNames: string[];
   ProjectManager: string; UE: string; UI: string;
   BackendDeveloper: string; FrontendDeveloper: string; Tester: string;
   ExternalDependencies: boolean;
@@ -60,14 +60,15 @@ const EMPTY: FormValues = {
   range: [dayjs('2026-01-01 00:00:00'), dayjs('2099-12-31 00:00:00')],
   Description: '', Keyword: '', MusearchShow: true,
   ChannelID: [], OtherChannelDesc: '',
-  DepartmentID: '', OtherDepartmentDesc: '', ProductGroupID: '', ProductManagerIds: [],
+  DepartmentID: '', OtherDepartmentDesc: '', ProductGroupName: [], ProductManagerNames: [],
   ProjectManager: '', UE: '', UI: '', BackendDeveloper: '', FrontendDeveloper: '', Tester: '',
   ExternalDependencies: false, ExternaldependencyDepartment: '', ExternaldependencyPo: '', ExternaldependencyPm: '',
   OperationManual: '', Remark: '',
 };
 
-function toFormValues(p: ProductRow | null, managers: ProductManager[]): FormValues {
+function toFormValues(p: ProductRow | null): FormValues {
   if (!p) return EMPTY;
+  const mgrNames = (p.ProductManagerList ?? []).map(m => m.Name);
   return {
     ProductName: p.ProductName,
     Status: p.Status,
@@ -79,8 +80,8 @@ function toFormValues(p: ProductRow | null, managers: ProductManager[]): FormVal
     OtherChannelDesc: p.OtherChannelDesc ?? '',
     DepartmentID: p.DepartmentID ?? '',
     OtherDepartmentDesc: p.OtherDepartmentDesc ?? '',
-    ProductGroupID: p.ProductGroupID ?? '',
-    ProductManagerIds: (p.ProductManagerList ?? []).map(m => m.ID),
+    ProductGroupName: p.ProductGroupName ? [p.ProductGroupName] : [],
+    ProductManagerNames: mgrNames.length ? mgrNames : p.ProductManagerName.split(',').map(s => s.trim()).filter(Boolean),
     ProjectManager: p.ProjectManager ?? '', UE: p.UE ?? '', UI: p.UI ?? '',
     BackendDeveloper: p.BackendDeveloper ?? '', FrontendDeveloper: p.FrontendDeveloper ?? '',
     Tester: p.Tester ?? '',
@@ -91,7 +92,6 @@ function toFormValues(p: ProductRow | null, managers: ProductManager[]): FormVal
     OperationManual: p.OperationManual ?? '',
     Remark: p.Remark ?? '',
   };
-  void managers;
 }
 
 function SectionTitle({ n, children }: { n: string; children: React.ReactNode }) {
@@ -130,10 +130,8 @@ export function ProductDrawer({ open, mode, initStep, product, options, onClose,
     const v = await form.validateFields();
     setSaving(true);
     try {
-      const mgrs = v.ProductManagerIds.map(id => {
-        const m = options.managers.find(x => x.ID === id);
-        return { ID: id, Name: m?.Name ?? id };
-      });
+      const mgrs = v.ProductManagerNames.map(n => ({ ID: n, Name: n }));
+      const groupName = v.ProductGroupName[0]?.trim() ?? '';
       const next: ProductRow = {
         ...(product ?? ({} as ProductRow)),
         ID: product?.ID ?? savedId ?? '',
@@ -148,7 +146,8 @@ export function ProductDrawer({ open, mode, initStep, product, options, onClose,
         OtherChannelDesc: v.OtherChannelDesc ?? '',
         DepartmentID: v.DepartmentID,
         OtherDepartmentDesc: v.OtherDepartmentDesc ?? '',
-        ProductGroupID: v.ProductGroupID,
+        ProductGroupID: '',
+        ProductGroupName: groupName,
         ProductManagerList: mgrs,
         ProductManagerName: mgrs.map(m => m.Name).join(','),
         ProjectManager: v.ProjectManager, UE: v.UE, UI: v.UI,
@@ -220,7 +219,7 @@ export function ProductDrawer({ open, mode, initStep, product, options, onClose,
           form={form}
           key={`${mode}-${product?.ID ?? 'new'}`}
           layout="vertical"
-          initialValues={toFormValues(product, options.managers)}
+          initialValues={toFormValues(product)}
           requiredMark="optional"
         >
           <SectionTitle n="01">基本信息</SectionTitle>
@@ -309,15 +308,20 @@ export function ProductDrawer({ open, mode, initStep, product, options, onClose,
               ) : null}
             </Form.Item>
             <Col span={8}>
-              <Form.Item name="ProductGroupID" label="产品组" rules={[{ required: true, message: '请选择产品组' }]}>
-                <Select placeholder="产品组"
-                  options={options.groups.map(g => ({ value: g.ID, label: g.Name }))} />
+              <Form.Item name="ProductGroupName" label="产品组" rules={[{ required: true, message: '请选择或输入产品组' }]}
+                extra="可直接输入新组名">
+                <Select mode="tags" maxCount={1} allowClear
+                  tokenSeparators={[',']}
+                  placeholder="选择或输入，如：机票组"
+                  options={options.groupNames.map(n => ({ value: n, label: n }))} />
               </Form.Item>
             </Col>
             <Col span={8}>
-              <Form.Item name="ProductManagerIds" label="产品经理（可多选）">
-                <Select mode="multiple" showSearch optionFilterProp="label" placeholder="产品经理"
-                  options={options.managers.map(m => ({ value: m.ID, label: m.Name }))} />
+              <Form.Item name="ProductManagerNames" label="产品经理（可多选）"
+                extra="输入姓名回车即添加，可输新名字">
+                <Select mode="tags" tokenSeparators={[',']}
+                  placeholder="输入或选择产品经理"
+                  options={options.managerNames.map(n => ({ value: n, label: n }))} />
               </Form.Item>
             </Col>
           </Row>

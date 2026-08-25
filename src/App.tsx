@@ -1,7 +1,7 @@
 import { Layout, Menu, Space, Tag, Typography } from 'antd';
 import {
   AppstoreOutlined, BookOutlined, PartitionOutlined,
-  TeamOutlined, UserOutlined, FileZipOutlined,
+  UserOutlined, FileZipOutlined,
 } from '@ant-design/icons';
 import { ProductManagement } from './pages/ProductManagement';
 import { USE_MOCK } from './api';
@@ -9,14 +9,12 @@ import { palette } from './theme';
 
 const { Header, Sider, Content } = Layout;
 
-// ─── 应用外壳：侧边导航（本次改版只激活产品管理，其余为占位）──────────
+// ─── 应用外壳：产品组/产品经理已标签化并入产品数据，不再设管理模块 ────
 
 const PRODUCT_LIBRARY_MENU = [
-  { key: 'pl_group', icon: <PartitionOutlined />, label: '产品组管理', disabled: true },
   { key: 'pl_dept', icon: <AppstoreOutlined />, label: '部门管理', disabled: true },
   { key: 'pl_channel', icon: <BookOutlined />, label: '渠道管理', disabled: true },
   { key: 'pl_product', icon: <AppstoreOutlined />, label: '产品管理' },
-  { key: 'pl_manager', icon: <TeamOutlined />, label: '产品经理管理', disabled: true },
   { key: 'pl_template', icon: <FileZipOutlined />, label: '模板管理', disabled: true },
 ];
 

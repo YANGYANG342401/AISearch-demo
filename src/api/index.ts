@@ -3,12 +3,12 @@
 // 或开发代理（vite.config.ts 中 /api → http://ecsearch-admin2.uat.k8s.ec）。
 
 import type {
-  Channel, Department, FeatureCode, PagedResult, ProductGroup,
-  ProductManager, ProductRow, QueryParams, Stats,
+  Channel, Department, FeatureCode, PagedResult,
+  ProductRow, QueryParams, Stats,
 } from '../types';
 export type {
-  Channel, Department, FeatureCode, PagedResult, ProductGroup,
-  ProductManager, ProductRow, QueryParams, Stats,
+  Channel, Department, FeatureCode, PagedResult,
+  ProductRow, QueryParams, Stats,
 } from '../types';
 import { mockApi } from './mockApi';
 
@@ -26,8 +26,10 @@ export interface ApiClient {
   getStats(): Promise<Stats>;
   getChannels(): Promise<Channel[]>;
   getDepartments(): Promise<Department[]>;
-  getGroups(): Promise<ProductGroup[]>;
-  getManagers(): Promise<ProductManager[]>;
+  /** 标签化：产品组选项从产品数据 distinct，不再依赖字典表 */
+  getGroupNames(): Promise<string[]>;
+  /** 标签化：产品经理选项从产品数据 distinct，不再依赖字典表 */
+  getManagerNames(): Promise<string[]>;
   getFeatureCodes(): Promise<FeatureCode[]>;
 }
 
@@ -77,7 +79,7 @@ const realApi: ApiClient = {
   async getStats() {
     // 真实后端无独立统计接口：取全量第一页推算
     const pr = await this.searchProducts({
-      productName: '', status: null, productGroupID: '', productManagerName: '',
+      productName: '', status: null, productGroupName: '', productManagerName: '',
       departmentID: '', channelIDAry: [], sortField: 'ProductName',
       sortDirection: 'Asc', pageSize: 1, pageIndex: 0,
     });
@@ -91,13 +93,14 @@ const realApi: ApiClient = {
     const d = await jsonPost<{ list: Department[] }>('/api/department/departmentList', {});
     return d.list;
   },
-  async getGroups() {
-    const d = await jsonPost<{ list: ProductGroup[] }>('/api/productgroup/productgrouplist', {});
-    return d.list;
+  async getGroupNames() {
+    // 过渡桥接：字典接口仍在时取名字；后端标签化后改为全量产品 distinct
+    const d = await jsonPost<{ list: { Name: string }[] }>('/api/productgroup/productgrouplist', {});
+    return d.list.map(g => g.Name);
   },
-  async getManagers() {
-    const d = await jsonPost<{ list: ProductManager[] }>('/api/productmanager/productManagerList', {});
-    return d.list;
+  async getManagerNames() {
+    const d = await jsonPost<{ list: { Name: string }[] }>('/api/productmanager/productManagerList', {});
+    return d.list.map(m => m.Name);
   },
   async getFeatureCodes() {
     const d = await jsonPost<{ featureCodeList: string[] }>('/api/User/featureCodeList', {});

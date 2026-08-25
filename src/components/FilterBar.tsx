@@ -1,10 +1,11 @@
 import { Button, Input, Select, Space } from 'antd';
 import { ReloadOutlined, SearchOutlined } from '@ant-design/icons';
 import { ChannelPicker } from './ChannelPicker';
-import type { Channel, Department, ProductGroup, ProductManager, QueryParams } from '../types';
+import type { Channel, Department, QueryParams } from '../types';
 import { STATUS_TEXT } from '../types';
 
-// ─── 筛选栏：7 个查询条件一行收纳，输入即查（防抖 400ms）──────────────
+// ─── 筛选栏：查询条件一行收纳，输入即查（防抖 400ms）──────────────────
+// 产品组/产品经理选项从产品数据 distinct（标签化，不再依赖字典表）。
 
 interface Props {
   params: Omit<QueryParams, 'sortField' | 'sortDirection' | 'pageSize' | 'pageIndex'>;
@@ -12,11 +13,11 @@ interface Props {
   onReset: () => void;
   channels: Channel[];
   departments: Department[];
-  groups: ProductGroup[];
-  managers: ProductManager[];
+  groupNames: string[];
+  managerNames: string[];
 }
 
-export function FilterBar({ params, onChange, onReset, channels, departments, groups, managers }: Props) {
+export function FilterBar({ params, onChange, onReset, channels, departments, groupNames, managerNames }: Props) {
   return (
     <Space size={[8, 8]} wrap style={{ alignItems: 'center' }}>
       <Input
@@ -38,10 +39,10 @@ export function FilterBar({ params, onChange, onReset, channels, departments, gr
       <Select
         allowClear
         placeholder="产品组"
-        value={params.productGroupID || undefined}
+        value={params.productGroupName || undefined}
         style={{ width: 130 }}
-        options={groups.map(g => ({ value: g.ID, label: g.Name }))}
-        onChange={v => onChange({ productGroupID: v ?? '' })}
+        options={groupNames.map(n => ({ value: n, label: n }))}
+        onChange={v => onChange({ productGroupName: v ?? '' })}
       />
       <Select
         allowClear
@@ -49,7 +50,7 @@ export function FilterBar({ params, onChange, onReset, channels, departments, gr
         placeholder="产品经理"
         value={params.productManagerName || undefined}
         style={{ width: 130 }}
-        options={managers.map(m => ({ value: m.Name, label: m.Name }))}
+        options={managerNames.map(n => ({ value: n, label: n }))}
         optionFilterProp="label"
         onChange={v => onChange({ productManagerName: v ?? '' })}
       />
