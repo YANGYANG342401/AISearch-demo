@@ -1,0 +1,1057 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>东航搜索数据智能看板</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
+<script>
+tailwind.config = {
+  theme: {
+    extend: {
+      colors: {
+        bg: { DEFAULT: '#0f172a', card: '#1e293b', hover: '#334155' },
+        accent: { DEFAULT: '#6366f1', light: '#818cf8', dark: '#4f46e5' },
+        purple: { DEFAULT: '#8b5cf6', light: '#a78bfa' },
+        success: '#22c55e',
+        danger: '#ef4444',
+        warning: '#f59e0b',
+      }
+    }
+  }
+}
+</script>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+  * { font-family: 'Inter', system-ui, -apple-system, sans-serif; }
+  body { background: #0f172a; color: #e2e8f0; margin: 0; }
+  ::-webkit-scrollbar { width: 6px; }
+  ::-webkit-scrollbar-track { background: #1e293b; }
+  ::-webkit-scrollbar-thumb { background: #475569; border-radius: 3px; }
+  @keyframes pulse-ring {
+    0% { transform: scale(1); opacity: 0.8; }
+    100% { transform: scale(2.5); opacity: 0; }
+  }
+  @keyframes fade-in { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+  .animate-fade-in { animation: fade-in 0.4s ease-out; }
+  @keyframes shimmer {
+    0% { background-position: -200% 0; }
+    100% { background-position: 200% 0; }
+  }
+  .shimmer { background: linear-gradient(90deg, transparent 25%, rgba(99,102,241,0.1) 50%, transparent 75%); background-size: 200% 100%; animation: shimmer 2s infinite; }
+  .sparkline-path { stroke-dasharray: 200; stroke-dashoffset: 200; animation: draw-line 1s ease-out forwards; }
+  @keyframes draw-line { to { stroke-dashoffset: 0; } }
+  @keyframes breathe {
+    0%, 100% { transform: scale(1); opacity: 0.7; }
+    50% { transform: scale(1.15); opacity: 1; }
+  }
+  .breathe { animation: breathe 3s ease-in-out infinite; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const { useState, useEffect, useRef, useMemo, useCallback } = React;
+
+// ==================== MOCK DATA ====================
+const CATEGORIES = [
+  { name: '特殊产品', color: '#6366f1', count: 28450, percentage: 18.2, change: 5.3 },
+  { name: '营销活动', color: '#8b5cf6', count: 15620, percentage: 10.0, change: -2.1 },
+  { name: '服务功能入口', color: '#06b6d4', count: 42380, percentage: 27.1, change: 3.8 },
+  { name: '出行规则咨询', color: '#14b8a6', count: 18760, percentage: 12.0, change: 12.5 },
+  { name: '会员与认证', color: '#f59e0b', count: 12340, percentage: 7.9, change: -1.4 },
+  { name: '集成产品', color: '#ec4899', count: 16890, percentage: 10.8, change: 8.2 },
+  { name: '增值服务产品', color: '#22c55e', count: 13250, percentage: 8.5, change: -4.6 },
+  { name: '联名商户活动', color: '#f97316', count: 8612, percentage: 5.5, change: 22.1 },
+];
+
+const CATEGORY_KEYWORDS = {
+  '特殊产品': [['趣游卡', 6161], ['随心飞', 2534], ['次卡', 2327], ['行享东方', 2262], ['缤飞上海', 1890], ['轻飞享', 1230], ['趣游神州', 980], ['随心兑', 650], ['周末随心飞', 426], ['十次卡', 139]],
+  '营销活动': [['学生惠', 5175], ['幸福专区', 4026], ['抖音兑换', 4840], ['易享券', 1230], ['生日礼', 890], ['周三领券', 650], ['会员日', 420], ['积分翻倍', 310], ['新人礼包', 280], ['推荐有礼', 150]],
+  '服务功能入口': [['发票', 6530], ['客服', 4738], ['行程单', 3418], ['值机', 2437], ['登机牌', 2148], ['退票', 1890], ['改签', 1560], ['儿童', 2104], ['常用乘机人', 2076], ['选座', 1340]],
+  '出行规则咨询': [['无成人陪伴儿童', 14385], ['行李', 4545], ['中转', 2301], ['宠物托运', 1230], ['轮椅服务', 890], ['孕妇乘机', 650], ['婴儿票', 420], ['退票规则', 310], ['改签规则', 280], ['行李额度', 150]],
+  '会员与认证': [['东方万里行', 3200], ['企业会员', 2100], ['积分兑换', 1890], ['学生认证', 1560], ['积分补登', 1230], ['教师认证', 890], ['小飞人', 650], ['里程补登', 420], ['会员等级', 310], ['联名卡', 280]],
+  '集成产品': [['大兴快轨', 3270], ['贵宾室', 2890], ['机票酒店', 2340], ['空铁联运', 1890], ['休息室', 1560], ['接送机', 1230], ['租车', 890], ['酒店套餐', 650], ['机+酒', 420], ['联运产品', 310]],
+  '增值服务产品': [['餐食', 2878], ['延误险', 1890], ['升舱', 1560], ['宠物', 1230], ['保险', 980], ['付费选座', 890], ['逾重行李', 650], ['Wi-Fi', 420], ['优先登机', 310], ['快速安检', 280]],
+  '联名商户活动': [['星巴克', 3200], ['招商银行', 1890], ['支付宝', 1560], ['微信支付', 1230], ['京东', 890], ['美团', 650], ['携程', 420], ['飞猪', 310], ['滴滴', 280], ['肯德基', 150]],
+};
+
+const TOP50 = [
+  { rank: 1, keyword: '无成人陪伴儿童', count: 14385, category: '出行规则咨询', trend: 'up', trendPct: 8.2 },
+  { rank: 2, keyword: '发票', count: 6530, category: '服务功能入口', trend: 'up', trendPct: 3.1 },
+  { rank: 3, keyword: '趣游卡', count: 6161, category: '特殊产品', trend: 'down', trendPct: 2.4 },
+  { rank: 4, keyword: '学生惠', count: 5175, category: '营销活动', trend: 'up', trendPct: 15.3 },
+  { rank: 5, keyword: '抖音兑换', count: 4840, category: '营销活动', trend: 'up', trendPct: 22.1 },
+  { rank: 6, keyword: '客服', count: 4738, category: '服务功能入口', trend: 'flat', trendPct: 0.3 },
+  { rank: 7, keyword: '行李', count: 4545, category: '出行规则咨询', trend: 'up', trendPct: 5.6 },
+  { rank: 8, keyword: '幸福专区', count: 4026, category: '营销活动', trend: 'down', trendPct: 1.8 },
+  { rank: 9, keyword: '行程单', count: 3418, category: '服务功能入口', trend: 'up', trendPct: 4.2 },
+  { rank: 10, keyword: '大兴快轨', count: 3270, category: '集成产品', trend: 'up', trendPct: 31.5 },
+  { rank: 11, keyword: '餐食', count: 2878, category: '增值服务产品', trend: 'down', trendPct: 3.2 },
+  { rank: 12, keyword: '随心飞', count: 2534, category: '特殊产品', trend: 'up', trendPct: 6.8 },
+  { rank: 13, keyword: '值机', count: 2437, category: '服务功能入口', trend: 'flat', trendPct: 0.5 },
+  { rank: 14, keyword: '次卡', count: 2327, category: '特殊产品', trend: 'up', trendPct: 4.1 },
+  { rank: 15, keyword: '中转', count: 2301, category: '出行规则咨询', trend: 'up', trendPct: 7.9 },
+  { rank: 16, keyword: '行享东方', count: 2262, category: '特殊产品', trend: 'down', trendPct: 5.3 },
+  { rank: 17, keyword: '登机牌', count: 2148, category: '服务功能入口', trend: 'up', trendPct: 2.7 },
+  { rank: 18, keyword: '儿童', count: 2104, category: '服务功能入口', trend: 'up', trendPct: 9.4 },
+  { rank: 19, keyword: '常用乘机人', count: 2076, category: '服务功能入口', trend: 'flat', trendPct: 1.1 },
+  { rank: 20, keyword: '贵宾室', count: 1890, category: '集成产品', trend: 'up', trendPct: 11.2 },
+  { rank: 21, keyword: '缤飞上海', count: 1890, category: '特殊产品', trend: 'up', trendPct: 18.6 },
+  { rank: 22, keyword: '退票', count: 1780, category: '服务功能入口', trend: 'down', trendPct: 2.3 },
+  { rank: 23, keyword: '延误险', count: 1650, category: '增值服务产品', trend: 'up', trendPct: 6.5 },
+  { rank: 24, keyword: '改签', count: 1560, category: '服务功能入口', trend: 'flat', trendPct: 0.8 },
+  { rank: 25, keyword: '升舱', count: 1480, category: '增值服务产品', trend: 'up', trendPct: 14.3 },
+  { rank: 26, keyword: '东方万里行', count: 1420, category: '会员与认证', trend: 'up', trendPct: 3.9 },
+  { rank: 27, keyword: '星巴克', count: 1380, category: '联名商户活动', trend: 'up', trendPct: 28.7 },
+  { rank: 28, keyword: '选座', count: 1340, category: '服务功能入口', trend: 'down', trendPct: 1.5 },
+  { rank: 29, keyword: '宠物托运', count: 1230, category: '出行规则咨询', trend: 'up', trendPct: 19.8 },
+  { rank: 30, keyword: '机票酒店', count: 1190, category: '集成产品', trend: 'up', trendPct: 8.4 },
+  { rank: 31, keyword: '企业会员', count: 1150, category: '会员与认证', trend: 'up', trendPct: 5.2 },
+  { rank: 32, keyword: '轻飞享', count: 1100, category: '特殊产品', trend: 'down', trendPct: 7.6 },
+  { rank: 33, keyword: '积分兑换', count: 1050, category: '会员与认证', trend: 'flat', trendPct: 0.4 },
+  { rank: 34, keyword: '空铁联运', count: 980, category: '集成产品', trend: 'up', trendPct: 12.1 },
+  { rank: 35, keyword: '休息室', count: 920, category: '集成产品', trend: 'up', trendPct: 6.7 },
+  { rank: 36, keyword: '保险', count: 890, category: '增值服务产品', trend: 'down', trendPct: 3.4 },
+  { rank: 37, keyword: '学生认证', count: 850, category: '会员与认证', trend: 'up', trendPct: 25.3 },
+  { rank: 38, keyword: '趣游神州', count: 810, category: '特殊产品', trend: 'up', trendPct: 9.8 },
+  { rank: 39, keyword: '轮椅服务', count: 780, category: '出行规则咨询', trend: 'up', trendPct: 4.5 },
+  { rank: 40, keyword: '付费选座', count: 750, category: '增值服务产品', trend: 'flat', trendPct: 1.2 },
+  { rank: 41, keyword: '招商银行', count: 720, category: '联名商户活动', trend: 'down', trendPct: 2.8 },
+  { rank: 42, keyword: '接送机', count: 690, category: '集成产品', trend: 'up', trendPct: 7.3 },
+  { rank: 43, keyword: 'Wi-Fi', count: 650, category: '增值服务产品', trend: 'up', trendPct: 16.4 },
+  { rank: 44, keyword: '积分补登', count: 620, category: '会员与认证', trend: 'down', trendPct: 4.1 },
+  { rank: 45, keyword: '易享券', count: 590, category: '营销活动', trend: 'up', trendPct: 11.8 },
+  { rank: 46, keyword: '教师认证', count: 560, category: '会员与认证', trend: 'up', trendPct: 33.2 },
+  { rank: 47, keyword: '租车', count: 530, category: '集成产品', trend: 'flat', trendPct: 0.9 },
+  { rank: 48, keyword: '小飞人', count: 490, category: '会员与认证', trend: 'up', trendPct: 8.6 },
+  { rank: 49, keyword: '优先登机', count: 460, category: '增值服务产品', trend: 'down', trendPct: 5.7 },
+  { rank: 50, keyword: '快速安检', count: 430, category: '增值服务产品', trend: 'up', trendPct: 13.5 },
+];
+
+const SURGE_24H = [
+  { rank: 1, keyword: '教师认证', current: 560, previous: 128, surge: 337.5, category: '会员与认证', hourly: [5,8,12,18,25,42,68,95,120,85,62,48,35,28,22,18,15,12,10,8,6,5,4,3] },
+  { rank: 2, keyword: '大兴快轨', current: 3270, previous: 890, surge: 267.4, category: '集成产品', hourly: [120,180,250,380,520,680,450,320,280,210,180,150,120,95,80,65,55,45,38,30,25,20,18,15] },
+  { rank: 3, keyword: '星巴克', current: 1380, previous: 420, surge: 228.6, category: '联名商户活动', hourly: [15,22,35,58,85,120,95,72,55,42,35,28,22,18,15,12,10,8,6,5,4,3,2,2] },
+  { rank: 4, keyword: '抖音兑换', current: 4840, previous: 1890, surge: 156.1, category: '营销活动', hourly: [80,120,180,280,420,580,450,350,280,210,180,150,120,95,80,65,55,45,38,30,25,20,18,15] },
+  { rank: 5, keyword: '学生惠', current: 5175, previous: 2340, surge: 121.2, category: '营销活动', hourly: [100,150,220,350,480,620,520,410,320,250,200,160,130,100,85,70,58,48,38,30,25,20,18,15] },
+  { rank: 6, keyword: '宠物托运', current: 1230, previous: 620, surge: 98.4, category: '出行规则咨询', hourly: [20,30,45,68,95,130,100,78,62,48,38,30,25,20,18,15,12,10,8,6,5,4,3,2] },
+  { rank: 7, keyword: '升舱', current: 1480, previous: 780, surge: 89.7, category: '增值服务产品', hourly: [25,38,55,82,110,145,115,88,70,55,45,35,28,22,18,15,12,10,8,6,5,4,3,2] },
+  { rank: 8, keyword: '缤飞上海', current: 1890, previous: 1050, surge: 80.0, category: '特殊产品', hourly: [35,52,75,110,150,195,160,125,98,78,62,48,38,30,25,20,18,15,12,10,8,6,5,4] },
+  { rank: 9, keyword: 'Wi-Fi', current: 650, previous: 380, surge: 71.1, category: '增值服务产品', hourly: [12,18,28,42,58,78,62,48,38,30,25,20,16,12,10,8,6,5,4,3,2,2,1,1] },
+  { rank: 10, keyword: '暑运特惠', current: 420, previous: 0, surge: -1, category: '营销活动', isNew: true, hourly: [0,0,0,0,0,0,0,5,15,35,58,82,65,48,38,30,25,20,18,15,12,10,8,6] },
+];
+
+const SURGE_WEEK = [
+  { rank: 1, keyword: '暑运特惠', current: 8500, previous: 1200, surge: 608.3, category: '营销活动', hourly: [50,80,120,180,250,350,280,220,180,140,110,85,68,55,45,38,30,25,20,18,15,12,10,8] },
+  { rank: 2, keyword: '教师认证', current: 4200, previous: 890, surge: 371.9, category: '会员与认证', hourly: [30,45,68,95,130,180,145,110,88,68,55,42,35,28,22,18,15,12,10,8,6,5,4,3] },
+  { rank: 3, keyword: '大兴快轨', current: 12500, previous: 3200, surge: 290.6, category: '集成产品', hourly: [80,120,180,280,380,520,420,320,260,200,160,125,100,82,68,55,45,38,30,25,20,18,15,12] },
+  { rank: 4, keyword: '宠物托运', current: 5800, previous: 1890, surge: 206.9, category: '出行规则咨询', hourly: [35,55,82,120,165,220,180,140,110,88,70,55,45,35,28,22,18,15,12,10,8,6,5,4] },
+  { rank: 5, keyword: '星巴克联名', current: 6200, previous: 2340, surge: 165.0, category: '联名商户活动', hourly: [40,62,92,135,185,250,200,155,125,98,78,60,48,38,30,25,20,16,12,10,8,6,5,4] },
+  { rank: 6, keyword: '亲子游', current: 3800, previous: 1560, surge: 143.6, category: '出行规则咨询', hourly: [25,38,58,85,118,158,128,98,78,62,50,38,30,25,20,16,12,10,8,6,5,4,3,2] },
+  { rank: 7, keyword: '学生惠', current: 15200, previous: 6890, surge: 120.6, category: '营销活动', hourly: [100,150,220,330,450,580,480,370,295,230,185,145,115,92,75,60,48,38,30,25,20,16,12,10] },
+  { rank: 8, keyword: '升舱', current: 4500, previous: 2100, surge: 114.3, category: '增值服务产品', hourly: [28,42,65,95,130,175,140,108,85,68,55,42,35,28,22,18,15,12,10,8,6,5,4,3] },
+  { rank: 9, keyword: '贵宾室', current: 7800, previous: 3890, surge: 100.5, category: '集成产品', hourly: [50,78,115,168,230,310,250,192,155,120,98,75,60,48,38,30,25,20,16,12,10,8,6,5] },
+  { rank: 10, keyword: '中转住宿', current: 3200, previous: 1650, surge: 93.9, category: '出行规则咨询', hourly: [22,35,52,75,105,140,112,88,70,55,45,35,28,22,18,15,12,10,8,6,5,4,3,2] },
+];
+
+const SURGE_MONTH = [
+  { rank: 1, keyword: '暑期机票', current: 25000, previous: 3200, surge: 681.3, category: '特殊产品', hourly: [150,230,340,500,680,920,740,570,460,355,285,220,175,140,112,90,72,58,46,37,30,24,19,15] },
+  { rank: 2, keyword: '暑运特惠', current: 18500, previous: 2890, surge: 540.1, category: '营销活动', hourly: [110,170,250,365,500,670,540,415,335,260,210,162,128,102,82,65,52,42,33,27,22,17,14,11] },
+  { rank: 3, keyword: '教师认证', current: 12000, previous: 2340, surge: 412.8, category: '会员与认证', hourly: [72,110,162,235,322,432,348,268,215,168,135,104,82,66,53,42,34,27,22,17,14,11,9,7] },
+  { rank: 4, keyword: '大兴快轨', current: 35000, previous: 8900, surge: 293.3, category: '集成产品', hourly: [200,310,455,660,900,1210,975,748,602,468,378,292,230,184,148,118,95,76,61,49,39,31,25,20] },
+  { rank: 5, keyword: '宠物托运', current: 15800, previous: 4560, surge: 246.5, category: '出行规则咨询', hourly: [95,146,214,312,425,570,460,353,284,221,178,137,108,87,70,56,45,36,29,23,18,15,12,9] },
+  { rank: 6, keyword: '星巴克联名', current: 18200, previous: 5890, surge: 209.0, category: '联名商户活动', hourly: [110,168,246,358,488,655,528,405,326,254,205,158,124,100,80,64,52,41,33,27,21,17,14,11] },
+  { rank: 7, keyword: '亲子游', current: 12500, previous: 4230, surge: 195.5, category: '出行规则咨询', hourly: [75,115,168,245,334,448,362,278,224,174,140,108,85,68,55,44,35,28,23,18,15,12,9,7] },
+  { rank: 8, keyword: '随心飞', current: 28000, previous: 9890, surge: 183.1, category: '特殊产品', hourly: [168,258,378,550,748,1005,810,622,501,390,314,242,191,153,123,98,79,63,51,41,33,26,21,17] },
+  { rank: 9, keyword: '升舱', current: 13500, previous: 5100, surge: 164.7, category: '增值服务产品', hourly: [81,124,182,265,360,484,390,300,242,188,152,117,92,74,59,47,38,30,24,20,16,13,10,8] },
+  { rank: 10, keyword: '贵宾室', current: 22000, previous: 8560, surge: 157.0, category: '集成产品', hourly: [132,203,297,432,588,790,638,489,394,307,247,190,150,120,97,78,62,50,40,32,26,21,17,13] },
+];
+
+const CITIES = [
+  { rank: 1, city: '上海', count: 21750, keywords: [['缤飞上海', 4300], ['浦东机场', 3200], ['虹桥机场', 2800], ['上海次卡', 1890], ['飞上海', 1560], ['上海贵宾室', 980], ['上海接送机', 650], ['上海酒店', 420]], coords: [121.47, 31.23] },
+  { rank: 2, city: '北京', count: 18900, keywords: [['飞北京', 3800], ['首都机场', 3200], ['大兴机场', 2890], ['北京次卡', 1650], ['北京贵宾室', 920], ['北京接送机', 580], ['北京酒店', 380]], coords: [116.40, 39.90] },
+  { rank: 3, city: '广州', count: 12340, keywords: [['飞广州', 2890], ['白云机场', 2450], ['广州次卡', 1230], ['广州贵宾室', 680], ['广州接送机', 450], ['广州酒店', 320]], coords: [113.26, 23.13] },
+  { rank: 4, city: '成都', count: 10890, keywords: [['飞成都', 2450], ['天府机场', 2100], ['双流机场', 1560], ['成都次卡', 980], ['成都贵宾室', 520], ['成都酒店', 280]], coords: [104.07, 30.57] },
+  { rank: 5, city: '深圳', count: 9560, keywords: [['飞深圳', 2200], ['宝安机场', 1890], ['深圳次卡', 890], ['深圳贵宾室', 480], ['深圳接送机', 350], ['深圳酒店', 250]], coords: [114.06, 22.55] },
+  { rank: 6, city: '昆明', count: 8230, keywords: [['飞昆明', 1890], ['长水机场', 1560], ['昆明次卡', 780], ['昆明贵宾室', 420], ['昆明接送机', 280]], coords: [102.83, 25.02] },
+  { rank: 7, city: '西安', count: 7450, keywords: [['飞西安', 1680], ['咸阳机场', 1420], ['西安次卡', 650], ['西安贵宾室', 380], ['西安酒店', 250]], coords: [108.94, 34.26] },
+  { rank: 8, city: '杭州', count: 6890, keywords: [['飞杭州', 1520], ['萧山机场', 1280], ['杭州次卡', 580], ['杭州贵宾室', 350], ['杭州接送机', 230]], coords: [120.15, 30.28] },
+  { rank: 9, city: '重庆', count: 6120, keywords: [['飞重庆', 1380], ['江北机场', 1150], ['重庆次卡', 520], ['重庆贵宾室', 310], ['重庆酒店', 210]], coords: [106.55, 29.56] },
+  { rank: 10, city: '厦门', count: 5340, keywords: [['飞厦门', 1200], ['高崎机场', 980], ['厦门次卡', 450], ['厦门贵宾室', 280], ['厦门酒店', 180]], coords: [118.09, 24.48] },
+];
+
+const INSIGHTS = [
+  { title: '暑运亲子出行需求激增', content: '「无成人陪伴儿童」连续 7 天位居搜索榜首，24h 搜索量 14,385 次，环比增长 8.2%。暑运期间亲子出行需求显著上升。', action: '建议增加无陪儿童服务入口的曝光位置，优化申请流程引导。', tags: ['#出行规则咨询', '#无成人陪伴儿童', '#暑运'] },
+  { title: '大兴快轨大促效果显著', content: '「大兴快轨」24h 飙升 267.4%，本周累计搜索 12,500 次。快轨大促活动有效拉动了搜索流量。', action: '建议持续监控快轨相关搜索热度，评估大促 ROI 并考虑追加投放。', tags: ['#集成产品', '#大兴快轨', '#大促'] },
+  { title: '教师认证搜索异常飙升', content: '「教师认证」24h 飙升 337.5%，本周增长 412.8%。开学季临近，教师群体认证需求集中爆发。', action: '建议配合开学季运营活动，在首页增加教师认证入口引导。', tags: ['#会员与认证', '#教师认证', '#开学季'] },
+  { title: '联名商户活动热度上升', content: '「星巴克」搜索 24h 飙升 228.6%，联名商户活动类整体占比 5.5%，环比增长 22.1%。', action: '建议评估联名活动对搜索流量的拉动效果，规划下一期联名合作。', tags: ['#联名商户活动', '#星巴克'] },
+  { title: '服务功能入口类占比偏高', content: '服务功能入口类搜索占比 27.1%，持续高于 25% 阈值。用户工具型搜索占比过高，核心产品搜索可能被淹没。', action: '建议优化服务功能入口的 APP 内可达性，减少用户通过搜索寻找基础功能的依赖。', tags: ['#服务功能入口', '#结构优化'] },
+  { title: '特殊产品热度分化', content: '「随心飞」搜索环比增长 6.8%，但「行享东方」下降 5.3%，「轻飞享」下降 7.6%。特殊产品内部热度出现分化。', action: '建议评估行享东方和轻飞享的产品吸引力，考虑是否需要新一轮推广或产品调整。', tags: ['#特殊产品', '#随心飞', '#行享东方'] },
+];
+
+const TREND_7D = {
+  dates: ['07-08', '07-09', '07-10', '07-11', '07-12', '07-13', '07-14'],
+  '特殊产品': [3800, 4100, 3950, 4200, 4350, 4100, 4380],
+  '营销活动': [2100, 2300, 2150, 2400, 2500, 2350, 2450],
+  '服务功能入口': [5800, 6100, 5950, 6200, 6400, 6150, 6380],
+  '出行规则咨询': [2400, 2600, 2500, 2700, 2800, 2650, 2780],
+  '会员与认证': [1600, 1750, 1680, 1800, 1850, 1780, 1850],
+  '集成产品': [2200, 2400, 2300, 2500, 2600, 2450, 2580],
+  '增值服务产品': [1700, 1850, 1780, 1900, 1950, 1880, 1960],
+  '联名商户活动': [1100, 1250, 1180, 1300, 1350, 1280, 1340],
+};
+
+// ==================== UTILITY COMPONENTS ====================
+
+function SectionTitle({ children, id }) {
+  return (
+    <div id={id} className="flex items-center gap-3 mb-5 scroll-mt-4">
+      <div className="w-1 h-6 rounded-full bg-gradient-to-b from-accent to-purple"></div>
+      <h2 className="text-lg font-semibold text-white">{children}</h2>
+    </div>
+  );
+}
+
+function TimeBadge({ active, onClick, children }) {
+  return (
+    <button
+      onClick={onClick}
+      className={`px-3 py-1.5 text-xs rounded-md transition-all duration-200 ${
+        active
+          ? 'bg-accent text-white shadow-lg shadow-accent/25'
+          : 'bg-bg-card text-slate-400 hover:text-white hover:bg-bg-hover'
+      }`}
+    >
+      {children}
+    </button>
+  );
+}
+
+function TrendIcon({ direction, pct }) {
+  if (direction === 'up') return <span className="text-success text-xs">↑ {pct}%</span>;
+  if (direction === 'down') return <span className="text-danger text-xs">↓ {pct}%</span>;
+  return <span className="text-slate-500 text-xs">→ {pct}%</span>;
+}
+
+function Sparkline({ data, width = 80, height = 24, color = '#6366f1' }) {
+  const max = Math.max(...data);
+  const min = Math.min(...data);
+  const range = max - min || 1;
+  const points = data.map((v, i) => {
+    const x = (i / (data.length - 1)) * width;
+    const y = height - ((v - min) / range) * (height - 4) - 2;
+    return `${x},${y}`;
+  }).join(' ');
+  return (
+    <svg width={width} height={height} className="inline-block">
+      <polyline points={points} fill="none" stroke={color} strokeWidth="1.5" className="sparkline-path" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+// ==================== AREA 1: CATEGORY OVERVIEW ====================
+
+function CategoryOverview() {
+  const [selectedCat, setSelectedCat] = useState(null);
+  const [timeRange, setTimeRange] = useState('today');
+  const chartRef = useRef(null);
+  const chartInstance = useRef(null);
+
+  useEffect(() => {
+    if (!chartRef.current) return;
+    chartInstance.current = echarts.init(chartRef.current);
+    const total = CATEGORIES.reduce((s, c) => s + c.count, 0);
+    const option = {
+      tooltip: {
+        trigger: 'item',
+        backgroundColor: 'rgba(15,23,42,0.95)',
+        borderColor: '#334155',
+        borderWidth: 1,
+        padding: [12, 16],
+        textStyle: { color: '#e2e8f0', fontSize: 13 },
+        formatter: (p) => {
+          const cat = CATEGORIES.find(c => c.name === p.name);
+          const arrow = cat && cat.change > 0 ? '↑' : cat && cat.change < 0 ? '↓' : '→';
+          const changeColor = cat && cat.change > 0 ? '#22c55e' : cat && cat.change < 0 ? '#ef4444' : '#94a3b8';
+          return `<div style="font-weight:600;font-size:14px;margin-bottom:6px">${p.name}</div>
+            <div style="display:flex;justify-content:space-between;gap:24px;margin-bottom:4px">
+              <span style="color:#94a3b8">搜索量</span>
+              <span style="font-weight:600;font-family:monospace">${p.value.toLocaleString()}</span>
+            </div>
+            <div style="display:flex;justify-content:space-between;gap:24px;margin-bottom:4px">
+              <span style="color:#94a3b8">占比</span>
+              <span style="font-weight:600">${p.percent.toFixed(1)}%</span>
+            </div>
+            <div style="display:flex;justify-content:space-between;gap:24px">
+              <span style="color:#94a3b8">环比</span>
+              <span style="color:${changeColor};font-weight:600">${arrow} ${cat ? Math.abs(cat.change) : 0}%</span>
+            </div>`;
+        }
+      },
+      legend: { show: false },
+      graphic: [
+        {
+          type: 'group',
+          left: 'center',
+          top: 'center',
+          children: [
+            { type: 'text', style: { text: '总搜索量', fill: '#64748b', fontSize: 12, textAlign: 'center', x: 0, y: -14 } },
+            { type: 'text', style: { text: total.toLocaleString(), fill: '#f1f5f9', fontSize: 22, fontWeight: 'bold', fontFamily: 'monospace', textAlign: 'center', x: 0, y: 8 } },
+          ]
+        }
+      ],
+      series: [{
+        type: 'pie',
+        radius: ['52%', '78%'],
+        center: ['50%', '50%'],
+        avoidLabelOverlap: true,
+        itemStyle: {
+          borderRadius: 6,
+          borderColor: '#1e293b',
+          borderWidth: 2,
+        },
+        label: {
+          show: true,
+          position: 'outside',
+          formatter: '{b}\n{d}%',
+          fontSize: 11,
+          color: '#94a3b8',
+          lineHeight: 16,
+        },
+        labelLine: {
+          show: true,
+          length: 12,
+          length2: 16,
+          lineStyle: { color: '#475569', width: 1 },
+          smooth: 0.3,
+        },
+        emphasis: {
+          scaleSize: 8,
+          label: { show: true, fontSize: 13, fontWeight: 'bold', color: '#fff', formatter: '{b}\n{d}%' },
+          itemStyle: { shadowBlur: 30, shadowColor: 'rgba(99,102,241,0.6)' },
+        },
+        animationType: 'scale',
+        animationEasing: 'elasticOut',
+        animationDuration: 1200,
+        data: CATEGORIES.map(c => ({
+          value: c.count, name: c.name,
+          itemStyle: {
+            color: new echarts.graphic.LinearGradient(0, 0, 1, 1, [
+              { offset: 0, color: c.color },
+              { offset: 1, color: c.color + 'bb' }
+            ]),
+            borderColor: c.color,
+            borderWidth: 2,
+          }
+        }))
+      }]
+    };
+    chartInstance.current.setOption(option);
+    const handleResize = () => chartInstance.current?.resize();
+    window.addEventListener('resize', handleResize);
+    return () => { window.removeEventListener('resize', handleResize); chartInstance.current?.dispose(); };
+  }, []);
+
+  return (
+    <div className="bg-bg-card rounded-xl p-6 border border-slate-700/50 animate-fade-in">
+      <div className="flex items-center justify-between mb-5">
+        <SectionTitle id="sec-overview">分类总览</SectionTitle>
+        <div className="flex gap-2">
+          {['today', 'yesterday', '7d', '30d'].map(t => (
+            <TimeBadge key={t} active={timeRange === t} onClick={() => setTimeRange(t)}>
+              {{ today: '今日', yesterday: '昨日', '7d': '近7天', '30d': '近30天' }[t]}
+            </TimeBadge>
+          ))}
+        </div>
+      </div>
+      <div className="flex gap-4 flex-col lg:flex-row">
+        <div className="w-full lg:w-[420px] h-80 flex-shrink-0">
+          <div ref={chartRef} className="w-full h-full"></div>
+        </div>
+        <div className="flex-1 grid grid-cols-2 gap-2.5">
+          {CATEGORIES.map(cat => (
+            <div key={cat.name} className="relative">
+              <div
+                onClick={() => setSelectedCat(selectedCat === cat.name ? null : cat.name)}
+                className={`p-3 rounded-lg border cursor-pointer transition-all duration-200 hover:shadow-lg ${
+                  selectedCat === cat.name
+                    ? 'border-accent bg-accent/10 shadow-accent/20'
+                    : 'border-slate-700/50 bg-bg/50 hover:border-slate-600'
+                }`}
+              >
+                <div className="flex items-center gap-2 mb-1.5">
+                  <div className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ backgroundColor: cat.color }}></div>
+                  <span className="text-xs text-slate-300">{cat.name}</span>
+                </div>
+                <div className="text-lg font-bold text-white mb-0.5">{cat.count.toLocaleString()}</div>
+                <div className="flex items-center justify-between">
+                  <span className="text-xs text-slate-500">{cat.percentage}%</span>
+                  <TrendIcon direction={cat.change > 0 ? 'up' : cat.change < 0 ? 'down' : 'flat'} pct={Math.abs(cat.change)} />
+                </div>
+              </div>
+              {selectedCat === cat.name && (
+                <div className="absolute z-20 top-full left-0 min-w-[200px] mt-1 bg-bg-card border border-slate-600 rounded-lg p-3 shadow-xl animate-fade-in">
+                  <div className="text-xs text-slate-400 mb-2 font-medium">Top 10 搜索词</div>
+                  {(CATEGORY_KEYWORDS[cat.name] || []).map(([kw, cnt], i) => (
+                    <div key={kw} className="flex justify-between items-center gap-3 py-1 border-b border-slate-700/30 last:border-0">
+                      <span className="text-xs text-slate-300 whitespace-nowrap"><span className="text-slate-500 mr-2">{i + 1}</span>{kw}</span>
+                      <span className="text-xs text-slate-400 font-mono whitespace-nowrap">{cnt.toLocaleString()}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ==================== AREA 2: TOP 50 ====================
+
+function Top50Table() {
+  const [filter, setFilter] = useState('all');
+  const [search, setSearch] = useState('');
+  const [timeRange, setTimeRange] = useState('today');
+  const [sortKey, setSortKey] = useState('rank');
+  const [sortDir, setSortDir] = useState('asc');
+
+  const filtered = useMemo(() => {
+    let data = [...TOP50];
+    if (filter !== 'all') data = data.filter(d => d.category === filter);
+    if (search) data = data.filter(d => d.keyword.toLowerCase().includes(search.toLowerCase()));
+    if (sortKey === 'count') data.sort((a, b) => sortDir === 'asc' ? a.count - b.count : b.count - a.count);
+    return data;
+  }, [filter, search, sortKey, sortDir]);
+
+  const handleSort = (key) => {
+    if (sortKey === key) setSortDir(d => d === 'asc' ? 'desc' : 'asc');
+    else { setSortKey(key); setSortDir('asc'); }
+  };
+
+  const rankBadge = (rank) => {
+    if (rank === 1) return 'bg-gradient-to-r from-yellow-500 to-amber-400 text-black';
+    if (rank === 2) return 'bg-gradient-to-r from-slate-300 to-slate-400 text-black';
+    if (rank === 3) return 'bg-gradient-to-r from-amber-600 to-amber-700 text-white';
+    return 'bg-bg text-slate-400';
+  };
+
+  return (
+    <div className="bg-bg-card rounded-xl p-6 border border-slate-700/50 animate-fade-in">
+      <div className="flex items-center justify-between mb-5 flex-wrap gap-3">
+        <SectionTitle id="sec-top50">实时热门搜索 Top50</SectionTitle>
+        <div className="flex gap-2 items-center flex-wrap">
+          {['today', 'yesterday', '7d', '30d'].map(t => (
+            <TimeBadge key={t} active={timeRange === t} onClick={() => setTimeRange(t)}>
+              {{ today: '今日', yesterday: '昨日', '7d': '近7天', '30d': '近30天' }[t]}
+            </TimeBadge>
+          ))}
+        </div>
+      </div>
+      <div className="flex gap-3 mb-4 flex-wrap">
+        <select
+          value={filter}
+          onChange={e => setFilter(e.target.value)}
+          className="bg-bg border border-slate-700 rounded-md px-3 py-1.5 text-sm text-slate-300 focus:outline-none focus:border-accent"
+        >
+          <option value="all">全部分类</option>
+          {CATEGORIES.map(c => <option key={c.name} value={c.name}>{c.name}</option>)}
+        </select>
+        <input
+          type="text"
+          placeholder="搜索关键词..."
+          value={search}
+          onChange={e => setSearch(e.target.value)}
+          className="bg-bg border border-slate-700 rounded-md px-3 py-1.5 text-sm text-slate-300 placeholder-slate-500 focus:outline-none focus:border-accent w-48"
+        />
+        <button className="ml-auto px-3 py-1.5 bg-accent/20 text-accent text-xs rounded-md hover:bg-accent/30 transition-colors flex items-center gap-1">
+          <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V16a2 2 0 01-2 2z" /></svg>
+          导出 Excel
+        </button>
+      </div>
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="text-slate-500 text-xs border-b border-slate-700/50">
+              <th className="text-left py-3 px-2 w-16 cursor-pointer hover:text-slate-300" onClick={() => handleSort('rank')}>排名</th>
+              <th className="text-left py-3 px-2">搜索词</th>
+              <th className="text-left py-3 px-2 cursor-pointer hover:text-slate-300" onClick={() => handleSort('count')}>
+                频次 {sortKey === 'count' && (sortDir === 'asc' ? '↑' : '↓')}
+              </th>
+              <th className="text-left py-3 px-2">分类</th>
+              <th className="text-left py-3 px-2">趋势</th>
+            </tr>
+          </thead>
+          <tbody>
+            {filtered.map(item => (
+              <tr key={item.rank} className="border-b border-slate-700/20 hover:bg-bg-hover/50 transition-colors">
+                <td className="py-2.5 px-2">
+                  <span className={`inline-flex items-center justify-center w-6 h-6 rounded text-xs font-bold ${rankBadge(item.rank)}`}>
+                    {item.rank}
+                  </span>
+                </td>
+                <td className="py-2.5 px-2 text-white font-medium whitespace-nowrap">{item.keyword}</td>
+                <td className="py-2.5 px-2 font-mono text-slate-300">{item.count.toLocaleString()}</td>
+                <td className="py-2.5 px-2">
+                  <span className="text-xs px-2 py-0.5 rounded-full bg-slate-700/50 text-slate-400">{item.category}</span>
+                </td>
+                <td className="py-2.5 px-2"><TrendIcon direction={item.trend} pct={item.trendPct} /></td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+// ==================== AREA 3: SURGE BOARD ====================
+
+function SurgeBoard() {
+  const [tab, setTab] = useState('24h');
+  const data = tab === '24h' ? SURGE_24H : tab === 'week' ? SURGE_WEEK : SURGE_MONTH;
+
+  return (
+    <div className="bg-bg-card rounded-xl p-6 border border-slate-700/50 animate-fade-in h-full">
+      <SectionTitle id="sec-surge">飙升榜</SectionTitle>
+      <div className="flex gap-1 mb-4 bg-bg rounded-lg p-1">
+        {[['24h', '24小时'], ['week', '本周'], ['month', '本月']].map(([k, l]) => (
+          <button
+            key={k}
+            onClick={() => setTab(k)}
+            className={`flex-1 py-2 text-xs rounded-md transition-all duration-200 ${
+              tab === k ? 'bg-accent text-white shadow-md' : 'text-slate-400 hover:text-white'
+            }`}
+          >
+            {l}
+          </button>
+        ))}
+      </div>
+      <div className="space-y-2">
+        {data.map(item => (
+          <div key={item.rank} className={`flex items-center gap-3 p-3 rounded-lg border transition-all duration-200 hover:bg-bg-hover/50 ${
+            item.surge > 500 ? 'border-danger/50 bg-danger/5' : 'border-slate-700/30'
+          }`}>
+            <span className={`w-6 h-6 flex items-center justify-center rounded text-xs font-bold ${
+              item.rank <= 3 ? 'bg-gradient-to-r from-accent to-purple text-white' : 'bg-bg text-slate-500'
+            }`}>
+              {item.rank}
+            </span>
+            {item.isNew && (
+              <span className="text-xs px-2 py-0.5 rounded bg-orange-500/20 text-orange-400 font-bold border border-orange-500/30">NEW</span>
+            )}
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-2">
+                <span className="text-sm text-white font-medium">{item.keyword}</span>
+                <span className="text-xs px-1.5 py-0.5 rounded bg-slate-700/50 text-slate-400">{item.category}</span>
+              </div>
+              <div className="flex items-center gap-3 mt-1">
+                <span className="text-xs text-slate-500">当前 {item.current.toLocaleString()}</span>
+                <span className="text-xs text-slate-600">vs</span>
+                <span className="text-xs text-slate-500">前期 {item.previous.toLocaleString()}</span>
+              </div>
+            </div>
+            <div className="flex flex-col items-end gap-1">
+              <span className={`text-sm font-bold ${
+                item.isNew ? 'text-orange-400' :
+                item.surge > 500 ? 'text-danger animate-pulse' : 'text-warning'
+              }`}>
+                {item.isNew ? '—' : `+${item.surge.toFixed(1)}%`}
+              </span>
+              <Sparkline data={item.hourly} width={60} height={20} color={item.isNew ? '#f97316' : item.surge > 500 ? '#ef4444' : '#f59e0b'} />
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ==================== AREA 4: CITY RANK ====================
+
+function CityRank() {
+  const [selectedCity, setSelectedCity] = useState(null);
+  const [timeRange, setTimeRange] = useState('today');
+  const mapRef = useRef(null);
+  const mapInstance = useRef(null);
+
+  useEffect(() => {
+    if (!mapRef.current) return;
+    mapInstance.current = echarts.init(mapRef.current);
+
+    // Use scatter on a blank canvas with geo-like positioning
+    const option = {
+      backgroundColor: 'transparent',
+      tooltip: {
+        trigger: 'item',
+        backgroundColor: 'rgba(15,23,42,0.95)',
+        borderColor: '#334155',
+        borderWidth: 1,
+        padding: [10, 14],
+        textStyle: { color: '#e2e8f0', fontSize: 12 },
+        formatter: (p) => {
+          if (!p.data || !p.data.city) return '';
+          return `<div style="font-weight:600;font-size:13px;margin-bottom:4px">${p.data.city}</div>
+            <div style="color:#94a3b8">搜索量: <span style="color:#f1f5f9;font-weight:600;font-family:monospace">${p.data.count.toLocaleString()}</span></div>`;
+        }
+      },
+      xAxis: { type: 'value', show: false, min: 73, max: 136 },
+      yAxis: { type: 'value', show: false, min: 17, max: 54 },
+      grid: { left: 20, right: 20, top: 10, bottom: 10 },
+      series: [
+        // Background glow
+        {
+          type: 'scatter',
+          coordinateSystem: 'cartesian2d',
+          symbol: 'circle',
+          silent: true,
+          data: CITIES.map(c => ({
+            name: c.city,
+            value: [...c.coords, c.count],
+            itemStyle: {
+              color: new echarts.graphic.RadialGradient(0.5, 0.5, 0.5, [
+                { offset: 0, color: 'rgba(99,102,241,0.25)' },
+                { offset: 1, color: 'rgba(99,102,241,0)' }
+              ])
+            },
+            symbolSize: Math.sqrt(c.count) * 2.2,
+          })),
+          animationDuration: 2000,
+          animationEasing: 'cubicOut',
+          z: 1,
+        },
+        // Main bubbles
+        {
+          type: 'scatter',
+          coordinateSystem: 'cartesian2d',
+          symbol: 'circle',
+          data: CITIES.map(c => {
+            const isLeft = c.coords[0] < 110;
+            return {
+              name: c.city,
+              value: [...c.coords, c.count],
+              city: c.city,
+              count: c.count,
+              itemStyle: {
+                color: new echarts.graphic.RadialGradient(0.5, 0.5, 0.5, [
+                  { offset: 0, color: c.count > 15000 ? '#8b5cf6' : c.count > 10000 ? '#6366f1' : '#06b6d4' },
+                  { offset: 1, color: c.count > 15000 ? 'rgba(139,92,246,0.4)' : c.count > 10000 ? 'rgba(99,102,241,0.4)' : 'rgba(6,182,212,0.4)' }
+                ]),
+                shadowBlur: 20,
+                shadowColor: c.count > 15000 ? 'rgba(139,92,246,0.6)' : 'rgba(99,102,241,0.4)',
+              },
+              symbolSize: Math.sqrt(c.count) * 1.1,
+              labelPos: isLeft ? 'left' : 'right',
+            };
+          }),
+          label: {
+            show: true,
+            formatter: (p) => {
+              const city = p.data.city;
+              const count = p.data.count;
+              return `{name|${city}}  {val|${(count / 1000).toFixed(1)}k}`;
+            },
+            rich: {
+              name: { fontSize: 12, color: '#e2e8f0', fontWeight: 'bold', lineHeight: 16 },
+              val: { fontSize: 10, color: '#94a3b8', lineHeight: 16 },
+            },
+            position: (p) => {
+              const isLeft = p[0] < 110;
+              return isLeft ? 'left' : 'right';
+            },
+            distance: 8,
+          },
+          animationDuration: 1500,
+          animationEasing: 'elasticOut',
+          z: 2,
+        },
+        // Pulse rings for top 3
+        {
+          type: 'effectScatter',
+          coordinateSystem: 'cartesian2d',
+          symbol: 'circle',
+          data: CITIES.slice(0, 3).map(c => ({
+            name: c.city,
+            value: [...c.coords, c.count],
+            city: c.city,
+            count: c.count,
+            itemStyle: { color: '#8b5cf6' },
+            symbolSize: Math.sqrt(c.count) * 0.6,
+          })),
+          rippleEffect: { brushType: 'stroke', scale: 4, period: 4 },
+          label: { show: false },
+          z: 3,
+        }
+      ],
+      graphic: [
+        {
+          type: 'text',
+          left: 'center',
+          bottom: 8,
+          style: {
+            text: '热门城市搜索热力分布',
+            fill: '#475569',
+            fontSize: 11,
+          }
+        }
+      ]
+    };
+    mapInstance.current.setOption(option);
+    mapInstance.current.on('click', (params) => {
+      if (params.data && params.data.city) {
+        setSelectedCity(CITIES.find(c => c.city === params.data.city));
+      }
+    });
+    const handleResize = () => mapInstance.current?.resize();
+    window.addEventListener('resize', handleResize);
+    return () => { window.removeEventListener('resize', handleResize); mapInstance.current?.dispose(); };
+  }, []);
+
+  return (
+    <div className="bg-bg-card rounded-xl p-6 border border-slate-700/50 animate-fade-in h-full">
+      <div className="flex items-center justify-between mb-4">
+        <SectionTitle id="sec-city">热门城市榜</SectionTitle>
+        <div className="flex gap-2">
+          {['today', '7d', '30d'].map(t => (
+            <TimeBadge key={t} active={timeRange === t} onClick={() => setTimeRange(t)}>
+              {{ today: '今日', '7d': '近7天', '30d': '近30天' }[t]}
+            </TimeBadge>
+          ))}
+        </div>
+      </div>
+      <div className="h-80 mb-4 relative">
+        <div ref={mapRef} className="w-full h-full rounded-lg"></div>
+      </div>
+      <div className="space-y-2">
+        {CITIES.map(city => (
+          <div
+            key={city.city}
+            onClick={() => setSelectedCity(selectedCity?.city === city.city ? null : city)}
+            className={`flex items-center gap-3 p-2.5 rounded-lg cursor-pointer transition-all duration-200 ${
+              selectedCity?.city === city.city ? 'bg-accent/10 border border-accent/50' : 'hover:bg-bg-hover/50 border border-transparent'
+            }`}
+          >
+            <span className={`w-6 h-6 flex items-center justify-center rounded text-xs font-bold ${
+              city.rank <= 3 ? 'bg-gradient-to-r from-accent to-purple text-white' : 'bg-bg text-slate-500'
+            }`}>
+              {city.rank}
+            </span>
+            <span className="text-sm text-white flex-1">{city.city}</span>
+            <span className="text-sm font-mono text-slate-300">{city.count.toLocaleString()}</span>
+          </div>
+        ))}
+      </div>
+      {/* City detail popover */}
+      {selectedCity && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={() => setSelectedCity(null)}>
+          <div className="bg-bg-card border border-slate-600 rounded-xl p-5 w-80 shadow-2xl animate-fade-in" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-bold text-white">{selectedCity.city}</h3>
+              <button onClick={() => setSelectedCity(null)} className="text-slate-400 hover:text-white">
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" /></svg>
+              </button>
+            </div>
+            <div className="text-sm text-slate-400 mb-3">总搜索量: <span className="text-white font-bold">{selectedCity.count.toLocaleString()}</span></div>
+            <div className="space-y-2">
+              {selectedCity.keywords.map(([kw, cnt], i) => (
+                <div key={kw} className="flex justify-between items-center py-1.5 border-b border-slate-700/30 last:border-0">
+                  <span className="text-sm text-slate-300"><span className="text-slate-500 mr-2">{i + 1}</span>{kw}</span>
+                  <span className="text-sm text-slate-400 font-mono">{cnt.toLocaleString()}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ==================== AREA 5: INSIGHTS ====================
+
+function DataInsights() {
+  const [expanded, setExpanded] = useState(3);
+  const [chartTab, setChartTab] = useState('trend');
+  const trendChartRef = useRef(null);
+  const stackChartRef = useRef(null);
+
+  useEffect(() => {
+    if (!trendChartRef.current) return;
+    const chart = echarts.init(trendChartRef.current);
+    const option = {
+      tooltip: { trigger: 'axis', backgroundColor: '#1e293b', borderColor: '#334155', textStyle: { color: '#e2e8f0' } },
+      legend: {
+        data: CATEGORIES.map(c => c.name),
+        textStyle: { color: '#94a3b8', fontSize: 10 },
+        top: 0,
+        type: 'scroll',
+        pageTextStyle: { color: '#94a3b8' },
+      },
+      grid: { left: 40, right: 20, top: 40, bottom: 30 },
+      xAxis: { type: 'category', data: TREND_7D.dates, axisLine: { lineStyle: { color: '#334155' } }, axisLabel: { color: '#94a3b8' } },
+      yAxis: { type: 'value', splitLine: { lineStyle: { color: '#1e293b' } }, axisLabel: { color: '#94a3b8' } },
+      series: CATEGORIES.map(cat => ({
+        name: cat.name,
+        type: 'line',
+        data: TREND_7D[cat.name],
+        smooth: true,
+        symbol: 'circle',
+        symbolSize: 4,
+        lineStyle: { width: 2, color: cat.color },
+        itemStyle: { color: cat.color },
+        areaStyle: { color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+          { offset: 0, color: cat.color + '30' },
+          { offset: 1, color: cat.color + '05' }
+        ])},
+      })),
+    };
+    chart.setOption(option);
+    const handleResize = () => chart?.resize();
+    window.addEventListener('resize', handleResize);
+    return () => { window.removeEventListener('resize', handleResize); chart?.dispose(); };
+  }, []);
+
+  useEffect(() => {
+    if (!stackChartRef.current) return;
+    const chart = echarts.init(stackChartRef.current);
+    const totalPerDay = TREND_7D.dates.map((_, i) =>
+      CATEGORIES.reduce((sum, cat) => sum + (TREND_7D[cat.name]?.[i] || 0), 0)
+    );
+    const option = {
+      tooltip: { trigger: 'axis', backgroundColor: '#1e293b', borderColor: '#334155', textStyle: { color: '#e2e8f0' } },
+      legend: {
+        data: CATEGORIES.map(c => c.name),
+        textStyle: { color: '#94a3b8', fontSize: 10 },
+        top: 0,
+        type: 'scroll',
+        pageTextStyle: { color: '#94a3b8' },
+      },
+      grid: { left: 40, right: 20, top: 40, bottom: 30 },
+      xAxis: { type: 'category', data: TREND_7D.dates, axisLine: { lineStyle: { color: '#334155' } }, axisLabel: { color: '#94a3b8' } },
+      yAxis: { type: 'value', max: 100, axisLabel: { color: '#94a3b8', formatter: '{value}%' }, splitLine: { lineStyle: { color: '#1e293b' } } },
+      series: CATEGORIES.map(cat => ({
+        name: cat.name,
+        type: 'bar',
+        stack: 'total',
+        data: TREND_7D.dates.map((_, i) => {
+          const val = TREND_7D[cat.name]?.[i] || 0;
+          return +(val / totalPerDay[i] * 100).toFixed(1);
+        }),
+        itemStyle: { color: cat.color },
+        barWidth: '60%',
+      })),
+    };
+    chart.setOption(option);
+    const handleResize = () => chart?.resize();
+    window.addEventListener('resize', handleResize);
+    return () => { window.removeEventListener('resize', handleResize); chart?.dispose(); };
+  }, []);
+
+  return (
+    <div className="bg-bg-card rounded-xl p-6 border border-slate-700/50 animate-fade-in">
+      <SectionTitle id="sec-insights">数据洞察</SectionTitle>
+      <div className="flex gap-1 mb-4 bg-bg rounded-lg p-1 w-fit">
+        {[['trend', '分类趋势'], ['stack', '占比变化']].map(([k, l]) => (
+          <button
+            key={k}
+            onClick={() => setChartTab(k)}
+            className={`px-4 py-2 text-xs rounded-md transition-all duration-200 ${
+              chartTab === k ? 'bg-accent text-white shadow-md' : 'text-slate-400 hover:text-white'
+            }`}
+          >
+            {l}
+          </button>
+        ))}
+      </div>
+      <div className="h-72 mb-6">
+        <div ref={trendChartRef} className={`w-full h-full ${chartTab !== 'trend' ? 'hidden' : ''}`} />
+        <div ref={stackChartRef} className={`w-full h-full ${chartTab !== 'stack' ? 'hidden' : ''}`} />
+      </div>
+      <div className="flex items-center justify-between mb-4">
+        <h3 className="text-sm font-semibold text-slate-300">智能洞察</h3>
+        <span className="text-xs text-slate-500">基于规则引擎自动生成</span>
+      </div>
+      <div className="space-y-3">
+        {INSIGHTS.slice(0, expanded).map((ins, i) => (
+          <div key={i} className="p-4 rounded-lg border border-slate-700/30 bg-bg/50 hover:border-slate-600 transition-all duration-200">
+            <div className="flex items-start gap-3">
+              <div className={`w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 ${
+                i < 3 ? 'bg-gradient-to-br from-accent to-purple' : 'bg-slate-700'
+              }`}>
+                <svg className="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 10V3L4 14h7v7l9-11h-7z" />
+                </svg>
+              </div>
+              <div className="flex-1">
+                <h4 className="text-sm font-semibold text-white mb-1">{ins.title}</h4>
+                <p className="text-xs text-slate-400 leading-relaxed mb-2">{ins.content}</p>
+                <div className="flex items-center gap-2 mb-2">
+                  <svg className="w-3.5 h-3.5 text-accent" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                  <span className="text-xs text-accent">{ins.action}</span>
+                </div>
+                <div className="flex gap-2 flex-wrap">
+                  {ins.tags.map(tag => (
+                    <span key={tag} className="text-xs px-2 py-0.5 rounded-full bg-accent/10 text-accent/80">{tag}</span>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+      {expanded < INSIGHTS.length && (
+        <button onClick={() => setExpanded(INSIGHTS.length)} className="w-full mt-3 py-2 text-xs text-slate-400 hover:text-white transition-colors">
+          展开全部 {INSIGHTS.length} 条洞察 ↓
+        </button>
+      )}
+      {expanded >= INSIGHTS.length && INSIGHTS.length > 3 && (
+        <button onClick={() => setExpanded(3)} className="w-full mt-3 py-2 text-xs text-slate-400 hover:text-white transition-colors">
+          收起 ↑
+        </button>
+      )}
+    </div>
+  );
+}
+
+// ==================== MAIN APP ====================
+
+function App() {
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [lastUpdate, setLastUpdate] = useState(new Date());
+  const [activeSection, setActiveSection] = useState('sec-overview');
+
+  useEffect(() => {
+    const timer = setInterval(() => setLastUpdate(new Date()), 300000);
+    return () => clearInterval(timer);
+  }, []);
+
+  useEffect(() => {
+    const observer = new IntersectionObserver(
+      entries => {
+        entries.forEach(entry => {
+          if (entry.isIntersecting) setActiveSection(entry.target.id);
+        });
+      },
+      { threshold: 0.3 }
+    );
+    ['sec-overview', 'sec-top50', 'sec-surge', 'sec-city', 'sec-insights'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) observer.observe(el);
+    });
+    return () => observer.disconnect();
+  }, [sidebarOpen]);
+
+  const scrollTo = (id) => {
+    document.getElementById(id)?.scrollIntoView({ behavior: 'smooth' });
+  };
+
+  const navItems = [
+    { id: 'sec-overview', label: '分类总览', icon: 'M11 3.055A9.001 9.001 0 1020.945 13H11V3.055z' },
+    { id: 'sec-top50', label: '热门 Top50', icon: 'M13 7h8m0 0v8m0-8l-8 8-4-4-6 6' },
+    { id: 'sec-surge', label: '飙升榜', icon: 'M13 7h8m0 0v8m0-8l-8 8-4-4-6 6' },
+    { id: 'sec-city', label: '热门城市', icon: 'M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z' },
+    { id: 'sec-insights', label: '数据洞察', icon: 'M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z' },
+  ];
+
+  return (
+    <div className="min-h-screen bg-bg flex">
+      {/* Sidebar */}
+      <div className={`fixed left-0 top-0 h-full bg-bg-card border-r border-slate-700/50 z-40 transition-all duration-300 ${
+        sidebarOpen ? 'w-56 translate-x-0' : 'w-56 -translate-x-full'
+      }`}>
+        <div className="p-5 border-b border-slate-700/50">
+          <div className="flex items-center gap-2">
+            <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-accent to-purple flex items-center justify-center">
+              <svg className="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+              </svg>
+            </div>
+            <span className="text-sm font-bold text-white">搜索数据看板</span>
+          </div>
+        </div>
+        <nav className="p-3 space-y-1">
+          {navItems.map(item => (
+            <button
+              key={item.id}
+              onClick={() => { scrollTo(item.id); }}
+              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm transition-all duration-200 ${
+                activeSection === item.id
+                  ? 'bg-accent/15 text-accent'
+                  : 'text-slate-400 hover:text-white hover:bg-bg-hover/50'
+              }`}
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d={item.icon} />
+              </svg>
+              {item.label}
+            </button>
+          ))}
+        </nav>
+      </div>
+
+      {/* Main content */}
+      <div className={`flex-1 transition-all duration-300 ${sidebarOpen ? 'ml-56' : 'ml-0'}`}>
+        {/* Header */}
+        <header className="sticky top-0 z-30 bg-bg/80 backdrop-blur-xl border-b border-slate-700/30">
+          <div className="flex items-center justify-between px-6 py-4">
+            <div className="flex items-center gap-4">
+              <button
+                onClick={() => setSidebarOpen(!sidebarOpen)}
+                className="p-2 rounded-lg bg-bg-card border border-slate-700/50 text-slate-400 hover:text-white hover:border-accent/50 transition-all duration-200"
+                title={sidebarOpen ? '收起侧边栏' : '展开侧边栏'}
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  {sidebarOpen
+                    ? <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M11 19l-7-7 7-7m8 14l-7-7 7-7" />
+                    : <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 6h16M4 12h16M4 18h16" />
+                  }
+                </svg>
+              </button>
+              <div>
+                <h1 className="text-xl font-bold text-white">东航搜索数据智能看板</h1>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  最后更新: {lastUpdate.toLocaleTimeString('zh-CN')} · 数据延迟 ≤ 5分钟
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center gap-3">
+              <div className="flex items-center gap-1.5">
+                <div className="w-2 h-2 rounded-full bg-success animate-pulse"></div>
+                <span className="text-xs text-slate-400">实时</span>
+              </div>
+            </div>
+          </div>
+        </header>
+
+        {/* Content */}
+        <main className="p-6 space-y-6 max-w-[1600px] mx-auto">
+          <CategoryOverview />
+          <Top50Table />
+          <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+            <SurgeBoard />
+            <CityRank />
+          </div>
+          <DataInsights />
+        </main>
+
+        {/* Footer */}
+        <footer className="px-6 py-4 border-t border-slate-700/30 text-center">
+          <p className="text-xs text-slate-600">东航APP搜索数据智能看板 · 数据仅供内部参考</p>
+        </footer>
+      </div>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+</script>
+</body>
+</html>

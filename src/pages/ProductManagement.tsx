@@ -1,22 +1,22 @@
 import {
-  App, Button, Card, Popconfirm, Space, Switch, Tag, Typography, Upload,
+  App, Button, Card, Modal, Popconfirm, Space, Table, Tag, Tooltip, Typography,
 } from 'antd';
 import {
-  CloudUploadOutlined, DownloadOutlined,
-  PlusOutlined, ReloadOutlined, StopOutlined,
+  DownloadOutlined, PlusOutlined, ReloadOutlined, StopOutlined,
 } from '@ant-design/icons';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { api, USE_MOCK } from '../api';
+import { api } from '../api';
 import { ProductTable } from '../components/ProductTable';
-import { DeletePasswordModal, ProductDrawer } from '../components/ProductDrawer';
+import { DeleteConfirmModal, ProductDrawer, TransferModal } from '../components/ProductDrawer';
 import { FilterBar } from '../components/FilterBar';
 import type {
-  Channel, Department, FeatureCode,
-  ProductRow, QueryParams, Stats,
+  Channel, Department, FeatureCode, Identity, LogEntry,
+  OrgGroup, ProductRow, QueryParams, Stats,
 } from '../types';
+import { canOperate } from '../types';
 import { palette } from '../theme';
 
-// ─── 产品管理页：筛选 → 列表 → 增删改，行为对齐原版 ────────────────────
+// ─── 产品管理页：筛选 → 列表 → 增删改 + 行级权限 + 双轨日志 ───────────
 
 const DEFAULT_PARAMS: QueryParams = {
   productName: '', status: null, productGroupName: '', productManagerName: '',
@@ -24,7 +24,7 @@ const DEFAULT_PARAMS: QueryParams = {
   pageSize: 50, pageIndex: 0,
 };
 
-export function ProductManagement() {
+export function ProductManagement({ identity }: { identity: Identity }) {
   const { message: msg, modal } = App.useApp();
   const [params, setParams] = useState<QueryParams>(DEFAULT_PARAMS);
   const [rows, setRows] = useState<ProductRow[]>([]);
@@ -33,10 +33,10 @@ export function ProductManagement() {
   const [loading, setLoading] = useState(true);
   const [options, setOptions] = useState<{
     channels: Channel[]; departments: Department[];
-    groupNames: string[]; managerNames: string[];
-  }>({ channels: [], departments: [], groupNames: [], managerNames: [] });
+    groupNames: string[]; managerNames: string[]; projectManagerNames: string[];
+    orgGroups: OrgGroup[];
+  }>({ channels: [], departments: [], groupNames: [], managerNames: [], projectManagerNames: [], orgGroups: [] });
   const [features, setFeatures] = useState<FeatureCode[]>([]);
-  const [isAdmin, setIsAdmin] = useState(true);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
 
   const [drawer, setDrawer] = useState<{
@@ -44,16 +44,25 @@ export function ProductManagement() {
   }>({ open: false, mode: 'add', step: 1, product: null });
   const [deleteModal, setDeleteModal] = useState<{ open: boolean; ids: string[] }>({ open: false, ids: [] });
   const [deleting, setDeleting] = useState(false);
+  const [transferModal, setTransferModal] = useState<{ open: boolean; product: ProductRow | null }>({ open: false, product: null });
+  const [transferring, setTransferring] = useState(false);
+  const [logModal, setLogModal] = useState<{ open: boolean; product: ProductRow | null; logs: LogEntry[] }>({
+    open: false, product: null, logs: [],
+  });
 
   const can = useCallback((code: FeatureCode) => features.includes(code), [features]);
 
   useEffect(() => {
     void (async () => {
-      const [channels, departments, groupNames, managerNames, featureCodes] = await Promise.all([
+      const [channels, departments, groupNames, managerNames, projectManagers, orgGroups, featureCodes] = await Promise.all([
         api.getChannels(), api.getDepartments(), api.getGroupNames(), api.getManagerNames(),
-        api.getFeatureCodes(),
+        api.getProjectManagers(), api.getOrgGroups(), api.getFeatureCodes(),
       ]);
-      setOptions({ channels, departments, groupNames, managerNames });
+      setOptions({
+        channels, departments, groupNames, managerNames,
+        projectManagerNames: projectManagers.map(m => m.Name),
+        orgGroups,
+      });
       setFeatures(featureCodes);
     })();
   }, []);
@@ -93,7 +102,6 @@ export function ProductManagement() {
   const refresh = useCallback(async (keepSelection = false) => {
     await query(params);
     api.getStats().then(setStats);
-    // 标签化：新产品可能引入新的组名/人名，选项随数据刷新
     const [groupNames, managerNames] = await Promise.all([api.getGroupNames(), api.getManagerNames()]);
     setOptions(o => ({ ...o, groupNames, managerNames }));
     if (!keepSelection) setSelectedIds([]);
@@ -105,15 +113,23 @@ export function ProductManagement() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // ── 权限工具 ──
+  const allowed = useCallback((p: ProductRow) =>
+    canOperate(p.CreatedBy ?? '', identity, options.orgGroups), [identity, options.orgGroups]);
+
   // ── 增删改 ──
   const openAdd = () => setDrawer({ open: true, mode: 'add', step: 1, product: null });
-  const openEdit = (row: ProductRow, step: 1 | 2) =>
+  const openEdit = (row: ProductRow, step: 1 | 2) => {
+    if (!allowed(row)) {
+      msg.warning(`「${row.ProductName}」的操作人是 ${row.CreatedBy || '（无主）'}，仅操作人本人、其组长或管理员可修改`);
+      return;
+    }
     setDrawer({ open: true, mode: 'edit', step, product: row });
-  const openLog = (row: ProductRow) =>
-    modal.info({
-      title: `「${row.ProductName}」操作日志`,
-      content: '此处对接原系统「操作日志」模块，展示该产品的变更历史。',
-    });
+  };
+  const openLog = async (row: ProductRow) => {
+    const logs = (await api.getLogs()).filter(l => l.TargetID === row.ID);
+    setLogModal({ open: true, product: row, logs });
+  };
 
   const saveProduct = async (p: ProductRow) => {
     if (drawer.mode === 'add') await api.addProduct(p);
@@ -134,11 +150,11 @@ export function ProductManagement() {
     });
   };
 
-  const doDelete = async (pwd: string) => {
+  const doDelete = async () => {
     setDeleting(true);
     try {
-      await api.deleteProducts(deleteModal.ids, pwd);
-      msg.success(`已删除 ${deleteModal.ids.length} 个产品`);
+      await api.deleteProducts(deleteModal.ids);
+      msg.success(`已删除 ${deleteModal.ids.length} 个产品（系统日志可查）`);
       setDeleteModal({ open: false, ids: [] });
       await refresh();
     } catch (e) {
@@ -148,21 +164,26 @@ export function ProductManagement() {
     }
   };
 
-  const doImport = async (file: File) => {
+  const doTransfer = async (toMember: string) => {
+    if (!transferModal.product) return;
+    setTransferring(true);
     try {
-      const { imported } = await api.importProducts(file);
-      msg.success(`${USE_MOCK ? '[Mock] ' : ''}导入完成：${imported} 条`);
-      await refresh();
+      await api.transferOwnership(transferModal.product.ID, toMember);
+      msg.success(`已转让给 ${toMember}，其组长同步获得操作权限`);
+      setTransferModal({ open: false, product: null });
+      setDrawer(d => ({ ...d, open: false }));
+      await refresh(true);
     } catch (e) {
-      msg.error(e instanceof Error ? e.message : '导入失败');
+      msg.error(e instanceof Error ? e.message : '转让失败');
+    } finally {
+      setTransferring(false);
     }
-    return false;
   };
 
-  const doExport = async () => {
+  const doExport = async (ids?: string[]) => {
     try {
-      await api.exportProducts(params);
-      msg.success('导出文件已生成');
+      await api.exportProducts(params, ids);
+      msg.success(ids ? `已导出所选 ${ids.length} 条` : '全量导出文件已生成');
     } catch (e) {
       msg.error(e instanceof Error ? e.message : '导出失败');
     }
@@ -174,14 +195,24 @@ export function ProductManagement() {
     { label: '已下架', value: stats.offShelves, color: palette.amber },
   ]), [stats]);
 
+  // 批量操作：仅批量停用（只限自己名下）与勾选导出（限有操作权限的条目；删除一律逐条）
+  const selectedRows = rows.filter(r => selectedIds.includes(r.ID));
+  const batchDisableAllowed = selectedRows.length > 0
+    && selectedRows.every(r => (r.CreatedBy ?? '') === identity.name);
+  // 导出权限 = 行级操作权限：管理员全量、组长含组员、本人限自己
+  const exportAllowed = selectedRows.length > 0 && selectedRows.every(allowed);
+  const deleteChannels = useMemo(() => new Set(
+    deleteModal.ids.flatMap(id => rows.find(r => r.ID === id)?.ChannelID ?? []),
+  ).size, [deleteModal.ids, rows]);
+
   return (
     <div style={{ padding: '16px 20px', display: 'flex', flexDirection: 'column', gap: 12, height: '100%' }}>
-      {/* 页头：标题 + 实时统计 */}
+      {/* 页头：标题 + 实时统计 + 身份 */}
       <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between' }}>
         <div>
-          <Typography.Title level={4} style={{ margin: 0 }}>产品管理</Typography.Title>
+          <Typography.Title level={4} style={{ margin: 0 }}>产品配置</Typography.Title>
           <Typography.Text type="secondary" style={{ fontSize: 12.5 }}>
-            维护搜索产品库：渠道覆盖、关联词与生命周期
+            维护搜索产品库：渠道覆盖、关联词与生命周期 · 当前身份 {identity.isAdmin ? '管理员' : `${identity.name}（${identity.groupName}）`}
           </Typography.Text>
         </div>
         <Space size={20}>
@@ -194,12 +225,6 @@ export function ProductManagement() {
               <Typography.Text type="secondary" style={{ fontSize: 11.5 }}>{s.label}</Typography.Text>
             </div>
           ))}
-          <div style={{ textAlign: 'right', borderLeft: '1px solid #E3E8F0', paddingLeft: 20 }}>
-            <div style={{ fontSize: 11.5, marginBottom: 2 }}>
-              <Typography.Text type="secondary">管理员视图</Typography.Text>
-            </div>
-            <Switch size="small" checked={isAdmin} onChange={setIsAdmin} />
-          </div>
         </Space>
       </div>
 
@@ -211,8 +236,7 @@ export function ProductManagement() {
           onReset={() => { setParams(DEFAULT_PARAMS); void query(DEFAULT_PARAMS); }}
           channels={options.channels}
           departments={options.departments}
-          groupNames={options.groupNames}
-          managerNames={options.managerNames}
+          mineOnlyDisabled={identity.isAdmin}
         />
       </Card>
 
@@ -226,14 +250,6 @@ export function ProductManagement() {
             {can('productLibrary_add') && (
               <Button type="primary" icon={<PlusOutlined />} onClick={openAdd}>新增产品</Button>
             )}
-            {can('productLibrary_import') && (
-              <Upload accept=".xlsx" showUploadList={false} beforeUpload={doImport} maxCount={1}>
-                <Button icon={<CloudUploadOutlined />}>导入</Button>
-              </Upload>
-            )}
-            {can('productLibrary_export') && (
-              <Button icon={<DownloadOutlined />} onClick={doExport}>导出</Button>
-            )}
           </Space>
           <Space size={8}>
             {selectedIds.length > 0 && (
@@ -244,15 +260,26 @@ export function ProductManagement() {
                     title={`停用选中的 ${selectedIds.length} 个产品？`}
                     description="停用后该产品下所有产品数据将不可被使用"
                     okText="停用" cancelText="取消" okButtonProps={{ danger: true }}
+                    disabled={!batchDisableAllowed}
                     onConfirm={() => confirmDisable(selectedIds)}
                   >
-                    <Button danger icon={<StopOutlined />}>批量停用</Button>
+                    <Tooltip title={batchDisableAllowed ? '' : '批量停用仅限自己是操作人（owner）的条目；他人条目请逐条处理'}>
+                      <Button danger icon={<StopOutlined />} disabled={!batchDisableAllowed}>批量停用</Button>
+                    </Tooltip>
                   </Popconfirm>
                 )}
-                {isAdmin && (
-                  <Button danger ghost onClick={() => setDeleteModal({ open: true, ids: selectedIds })}>
-                    批量删除
-                  </Button>
+                {can('productLibrary_export') && (
+                  <Tooltip title={exportAllowed
+                    ? `导出所选 ${selectedIds.length} 条（管理员可全选后导出全量）`
+                    : '仅可导出自己有操作权限的条目（本人名下 / 组员名下 / 管理员全量）'}>
+                    <Button
+                      icon={<DownloadOutlined />}
+                      disabled={!exportAllowed}
+                      onClick={() => void doExport(selectedIds)}
+                    >
+                      导出所选 {selectedIds.length} 项
+                    </Button>
+                  </Tooltip>
                 )}
               </>
             )}
@@ -264,8 +291,8 @@ export function ProductManagement() {
           params={params} onParamsChange={patchParams}
           channels={options.channels} departments={options.departments}
           selectedIds={selectedIds} onSelectedIdsChange={setSelectedIds}
-          isAdmin={isAdmin}
-          onEdit={openEdit} onViewLog={openLog}
+          identity={identity} orgGroups={options.orgGroups}
+          onEdit={openEdit} onViewLog={row => void openLog(row)}
           onDisable={confirmDisable}
           onDelete={ids => setDeleteModal({ open: true, ids })}
         />
@@ -277,17 +304,52 @@ export function ProductManagement() {
         initStep={drawer.step}
         product={drawer.product}
         options={options}
+        identity={identity}
         onClose={() => setDrawer(d => ({ ...d, open: false }))}
         onSave={saveProduct}
+        onTransfer={row => setTransferModal({ open: true, product: row })}
       />
 
-      <DeletePasswordModal
+      <DeleteConfirmModal
         open={deleteModal.open}
         count={deleteModal.ids.length}
+        channels={deleteChannels}
         loading={deleting}
         onConfirm={doDelete}
         onCancel={() => setDeleteModal({ open: false, ids: [] })}
       />
+
+      <TransferModal
+        open={transferModal.open}
+        itemName={transferModal.product?.ProductName ?? ''}
+        ownerId={transferModal.product?.CreatedBy}
+        orgGroups={options.orgGroups}
+        loading={transferring}
+        onConfirm={doTransfer}
+        onCancel={() => setTransferModal({ open: false, product: null })}
+      />
+
+      <Modal
+        open={logModal.open}
+        title={`操作日志 · ${logModal.product?.ProductName ?? ''}`}
+        footer={null}
+        onCancel={() => setLogModal({ open: false, product: null, logs: [] })}
+        width={680}
+      >
+        <Table<LogEntry>
+          rowKey="ID" size="small"
+          dataSource={logModal.logs}
+          columns={[
+            { title: '时间', dataIndex: 'Time', width: 150,
+              render: (v: string) => <span className="tabular" style={{ fontSize: 12 }}>{v}</span> },
+            { title: '操作人', dataIndex: 'User', width: 90 },
+            { title: '动作', dataIndex: 'Action', width: 80 },
+            { title: '详情', dataIndex: 'Detail', render: (v: string) => <span style={{ fontSize: 12.5 }}>{v}</span> },
+          ]}
+          pagination={false}
+          locale={{ emptyText: '暂无日志记录' }}
+        />
+      </Modal>
     </div>
   );
 }

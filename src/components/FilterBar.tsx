@@ -1,11 +1,11 @@
-import { Button, Input, Select, Space } from 'antd';
+import { Button, Checkbox, Input, Select, Space, Tooltip } from 'antd';
 import { ReloadOutlined, SearchOutlined } from '@ant-design/icons';
 import { ChannelPicker } from './ChannelPicker';
 import type { Channel, Department, QueryParams } from '../types';
 import { STATUS_TEXT } from '../types';
 
 // ─── 筛选栏：查询条件一行收纳，输入即查（防抖 400ms）──────────────────
-// 产品组/产品经理选项从产品数据 distinct（标签化，不再依赖字典表）。
+// 产品组/产品经理筛选已移除——归属与操作权改为行内直接展示（见列表操作人列）。
 
 interface Props {
   params: Omit<QueryParams, 'sortField' | 'sortDirection' | 'pageSize' | 'pageIndex'>;
@@ -13,11 +13,11 @@ interface Props {
   onReset: () => void;
   channels: Channel[];
   departments: Department[];
-  groupNames: string[];
-  managerNames: string[];
+  /** 管理员全量可见，勾选置灰 */
+  mineOnlyDisabled?: boolean;
 }
 
-export function FilterBar({ params, onChange, onReset, channels, departments, groupNames, managerNames }: Props) {
+export function FilterBar({ params, onChange, onReset, channels, departments, mineOnlyDisabled }: Props) {
   return (
     <Space size={[8, 8]} wrap style={{ alignItems: 'center' }}>
       <Input
@@ -38,24 +38,6 @@ export function FilterBar({ params, onChange, onReset, channels, departments, gr
       />
       <Select
         allowClear
-        placeholder="产品组"
-        value={params.productGroupName || undefined}
-        style={{ width: 130 }}
-        options={groupNames.map(n => ({ value: n, label: n }))}
-        onChange={v => onChange({ productGroupName: v ?? '' })}
-      />
-      <Select
-        allowClear
-        showSearch
-        placeholder="产品经理"
-        value={params.productManagerName || undefined}
-        style={{ width: 130 }}
-        options={managerNames.map(n => ({ value: n, label: n }))}
-        optionFilterProp="label"
-        onChange={v => onChange({ productManagerName: v ?? '' })}
-      />
-      <Select
-        allowClear
         showSearch
         placeholder="业务归属"
         value={params.departmentID || undefined}
@@ -69,6 +51,15 @@ export function FilterBar({ params, onChange, onReset, channels, departments, gr
         channels={channels}
         onChange={ids => onChange({ channelIDAry: ids })}
       />
+      <Tooltip title={mineOnlyDisabled ? '管理员全量可见，无需筛选' : '显示 owner 是本人、或本人是其组长的条目'}>
+        <Checkbox
+          checked={!!params.mineOnly}
+          disabled={mineOnlyDisabled}
+          onChange={e => onChange({ mineOnly: e.target.checked })}
+        >
+          仅看与自己有关条目
+        </Checkbox>
+      </Tooltip>
       <Button icon={<ReloadOutlined />} onClick={onReset}>重置</Button>
     </Space>
   );

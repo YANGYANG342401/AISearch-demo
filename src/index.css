@@ -54,6 +54,20 @@ body {
   outline-offset: 1px;
 }
 
+/* ─── 预设词预览：打字机光标 ───────────────────────────────────── */
+
+.preview-cursor {
+  animation: preview-blink 0.9s step-end infinite;
+  color: #1b3b8b;
+  font-weight: 300;
+}
+
+@keyframes preview-blink {
+  50% {
+    opacity: 0;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

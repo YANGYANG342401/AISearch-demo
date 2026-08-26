@@ -7,8 +7,9 @@ import dayjs, { type Dayjs } from 'dayjs';
 import { useEffect, useMemo, useState } from 'react';
 import { ChannelPickerFormBlock } from './ChannelPicker';
 import type {
-  Channel, Department, ProductRow,
+  Channel, Department, Identity, OrgGroup, ProductRow,
 } from '../types';
+import { canOperate, isOrphan } from '../types';
 import { STATUS_TEXT } from '../types';
 import { palette } from '../theme';
 
@@ -22,6 +23,8 @@ interface OptionData {
   departments: Department[];
   groupNames: string[];
   managerNames: string[];
+  projectManagerNames: string[];
+  orgGroups: OrgGroup[];
 }
 
 interface Props {
@@ -30,8 +33,11 @@ interface Props {
   initStep: 1 | 2;
   product: ProductRow | null;
   options: OptionData;
+  identity: Identity;
   onClose: () => void;
   onSave: (product: ProductRow) => Promise<void>;
+  /** 转让操作权（编辑态可用）：由页面承接弹窗与落库 */
+  onTransfer?: (row: ProductRow) => void;
 }
 
 type FormValues = {
@@ -47,6 +53,7 @@ type FormValues = {
   OtherDepartmentDesc: string;
   ProductGroupName: string[];
   ProductManagerNames: string[];
+  NewOperator?: string;
   ProjectManager: string; UE: string; UI: string;
   BackendDeveloper: string; FrontendDeveloper: string; Tester: string;
   ExternalDependencies: boolean;
@@ -55,19 +62,24 @@ type FormValues = {
   Remark: string;
 };
 
-const EMPTY: FormValues = {
-  ProductName: '', Status: 'PutOnShelves',
-  range: [dayjs('2026-01-01 00:00:00'), dayjs('2099-12-31 00:00:00')],
-  Description: '', Keyword: '', MusearchShow: true,
-  ChannelID: [], OtherChannelDesc: '',
-  DepartmentID: '', OtherDepartmentDesc: '', ProductGroupName: [], ProductManagerNames: [],
-  ProjectManager: '', UE: '', UI: '', BackendDeveloper: '', FrontendDeveloper: '', Tester: '',
-  ExternalDependencies: false, ExternaldependencyDepartment: '', ExternaldependencyPo: '', ExternaldependencyPm: '',
-  OperationManual: '', Remark: '',
-};
+function emptyValues(identity: Identity): FormValues {
+  // 身份带出：产品经理=本人、产品组=本组（非管理员锁定）
+  return {
+    ProductName: '', Status: 'PutOnShelves',
+    range: [dayjs('2026-01-01 00:00:00'), dayjs('2099-12-31 00:00:00')],
+    Description: '', Keyword: '', MusearchShow: true,
+    ChannelID: [], OtherChannelDesc: '',
+    DepartmentID: '', OtherDepartmentDesc: '',
+    ProductGroupName: identity.groupName ? [identity.groupName] : [],
+    ProductManagerNames: identity.isAdmin ? [] : [identity.name],
+    ProjectManager: '', UE: '', UI: '', BackendDeveloper: '', FrontendDeveloper: '', Tester: '',
+    ExternalDependencies: false, ExternaldependencyDepartment: '', ExternaldependencyPo: '', ExternaldependencyPm: '',
+    OperationManual: '', Remark: '',
+  };
+}
 
-function toFormValues(p: ProductRow | null): FormValues {
-  if (!p) return EMPTY;
+function toFormValues(p: ProductRow | null, identity: Identity): FormValues {
+  if (!p) return emptyValues(identity);
   const mgrNames = (p.ProductManagerList ?? []).map(m => m.Name);
   return {
     ProductName: p.ProductName,
@@ -106,7 +118,7 @@ function SectionTitle({ n, children }: { n: string; children: React.ReactNode })
   );
 }
 
-export function ProductDrawer({ open, mode, initStep, product, options, onClose, onSave }: Props) {
+export function ProductDrawer({ open, mode, initStep, product, options, identity, onClose, onSave, onTransfer }: Props) {
   const [form] = Form.useForm<FormValues>();
   const [step, setStep] = useState<1 | 2>(initStep);
   const [saving, setSaving] = useState(false);
@@ -132,10 +144,13 @@ export function ProductDrawer({ open, mode, initStep, product, options, onClose,
     try {
       const mgrs = v.ProductManagerNames.map(n => ({ ID: n, Name: n }));
       const groupName = v.ProductGroupName[0]?.trim() ?? '';
+      // 无主条目：编辑时强制补充的新操作员接管 ownership
+      const owner = v.NewOperator?.trim() || product?.CreatedBy || identity.name;
       const next: ProductRow = {
         ...(product ?? ({} as ProductRow)),
         ID: product?.ID ?? savedId ?? '',
         ProductName: v.ProductName.trim(),
+        CreatedBy: owner,
         Status: v.Status,
         StartTime: v.range[0].format(DT),
         EndTime: v.range[1].format(DT),
@@ -217,9 +232,9 @@ export function ProductDrawer({ open, mode, initStep, product, options, onClose,
       {step === 1 ? (
         <Form
           form={form}
-          key={`${mode}-${product?.ID ?? 'new'}`}
+          key={`${mode}-${product?.ID ?? 'new'}-${identity.key}`}
           layout="vertical"
-          initialValues={toFormValues(product)}
+          initialValues={toFormValues(product, identity)}
           requiredMark="optional"
         >
           <SectionTitle n="01">基本信息</SectionTitle>
@@ -289,7 +304,32 @@ export function ProductDrawer({ open, mode, initStep, product, options, onClose,
           </Form.Item>
 
           <Divider style={{ margin: '4px 0 16px' }} />
-          <SectionTitle n="03">归属</SectionTitle>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <SectionTitle n="03">归属</SectionTitle>
+            {mode === 'edit' && product && onTransfer
+              && canOperate(product.CreatedBy ?? '', identity, options.orgGroups)
+              && !isOrphan(product.CreatedBy ?? '', options.orgGroups) && (
+              <a onClick={() => onTransfer(product)} style={{ fontSize: 12.5 }}>转让操作权 →</a>
+            )}
+          </div>
+          <Typography.Paragraph type="secondary" style={{ fontSize: 12, marginTop: -6, marginBottom: 12 }}>
+            创建人为当前条目的 owner，创建人及其所在组长可以对当前数据进行操作。
+          </Typography.Paragraph>
+          {mode === 'edit' && product && isOrphan(product.CreatedBy ?? '', options.orgGroups) && (
+            <Form.Item
+              name="NewOperator" label="补充操作员（必填）"
+              extra="该产品当前无主（原操作人已不在组织结构中），保存前需指定新的操作员"
+              rules={[{ required: true, message: '无主条目必须补充新操作员才能保存' }]}
+            >
+              <Select
+                showSearch optionFilterProp="label" placeholder="从组织成员中选择新操作员"
+                options={options.orgGroups.flatMap(g => {
+                  const people = [g.Leader, ...g.Members].filter(Boolean);
+                  return people.map(p => ({ value: p, label: `${p}（${g.Name}）` }));
+                })}
+              />
+            </Form.Item>
+          )}
           <Row gutter={16}>
             <Col span={8}>
               <Form.Item name="DepartmentID" label="业务归属" rules={[{ required: true, message: '请选择业务归属' }]}>
@@ -308,19 +348,26 @@ export function ProductDrawer({ open, mode, initStep, product, options, onClose,
               ) : null}
             </Form.Item>
             <Col span={8}>
-              <Form.Item name="ProductGroupName" label="产品组" rules={[{ required: true, message: '请选择或输入产品组' }]}
-                extra="可直接输入新组名">
+              <Form.Item
+                name="ProductGroupName" label="产品组"
+                rules={[{ required: true, message: '请选择产品组' }]}
+                extra={identity.isAdmin ? undefined : '由登录身份自动带出（本人所属组）'}
+              >
                 <Select mode="tags" maxCount={1} allowClear
                   tokenSeparators={[',']}
-                  placeholder="选择或输入，如：机票组"
+                  disabled={!identity.isAdmin}
+                  placeholder="选择产品组"
                   options={options.groupNames.map(n => ({ value: n, label: n }))} />
               </Form.Item>
             </Col>
             <Col span={8}>
-              <Form.Item name="ProductManagerNames" label="产品经理（可多选）"
-                extra="输入姓名回车即添加，可输新名字">
+              <Form.Item
+                name="ProductManagerNames" label="产品经理（可多选）"
+                extra={identity.isAdmin ? '管理员可调整' : '由登录身份自动带出（创建人本人）'}
+              >
                 <Select mode="tags" tokenSeparators={[',']}
-                  placeholder="输入或选择产品经理"
+                  disabled={!identity.isAdmin}
+                  placeholder="产品经理"
                   options={options.managerNames.map(n => ({ value: n, label: n }))} />
               </Form.Item>
             </Col>
@@ -334,7 +381,16 @@ export function ProductDrawer({ open, mode, initStep, product, options, onClose,
               .map(([name, label]) => (
                 <Col span={8} key={name}>
                   <Form.Item name={name} label={label}>
-                    <Input placeholder={label} />
+                    {name === 'ProjectManager' ? (
+                      <Select
+                        showSearch allowClear
+                        placeholder="从配置中选择"
+                        optionFilterProp="label"
+                        options={options.projectManagerNames.map(n => ({ value: n, label: n }))}
+                      />
+                    ) : (
+                      <Input placeholder={label} />
+                    )}
                   </Form.Item>
                 </Col>
               ))}
@@ -504,27 +560,75 @@ function ChannelTemplateForm({ channel, value, onChange }: {
   );
 }
 
-// ─── 删除确认：对齐原版需输入操作密码的物理删除 ────────────────────────
+// ─── 权限转让：接收人成为 owner，转让方失去权限 ───────────────────────
+// 选人即可，无需关心对方组长——权限链由系统按组织结构自动推算。
 
-export function DeletePasswordModal({ open, count, onConfirm, onCancel, loading }: {
-  open: boolean; count: number;
-  onConfirm: (pwd: string) => void; onCancel: () => void; loading: boolean;
+export function TransferModal({ open, itemName, ownerId, orgGroups, onConfirm, onCancel, loading }: {
+  open: boolean;
+  itemName: string;
+  ownerId?: string;
+  orgGroups: OrgGroup[];
+  onConfirm: (toMember: string) => void;
+  onCancel: () => void;
+  loading: boolean;
 }) {
-  const [pwd, setPwd] = useState('');
-  useEffect(() => { if (open) setPwd(''); }, [open]);
+  const [target, setTarget] = useState<string>();
+  useEffect(() => { if (open) setTarget(undefined); }, [open]);
+
+  const currentOwner = ownerId ?? '';
+  const options = orgGroups.flatMap(g => {
+    const people = [g.Leader, ...g.Members].filter(Boolean);
+    return people.map(p => ({ value: p, label: `${p}（${g.Name}）` }));
+  }).filter(o => o.value !== currentOwner);
+
+  return (
+    <Modal
+      open={open}
+      title={`权限转让 · ${itemName}`}
+      okText="确认转让" okButtonProps={{ danger: true, loading, disabled: !target }}
+      cancelText="取消"
+      onOk={() => target && onConfirm(target)}
+      onCancel={onCancel}
+    >
+      <Typography.Paragraph type="secondary" style={{ fontSize: 12.5 }}>
+        当前操作人：<b>{currentOwner || '（无主）'}</b>
+      </Typography.Paragraph>
+      <Typography.Paragraph>
+        转让后接收人（及其组长）成为本条数据的操作人，当前操作人（及其组长）失去该条数据的操作权限。
+      </Typography.Paragraph>
+      <Select
+        showSearch optionFilterProp="label"
+        style={{ width: '100%' }}
+        placeholder="选择接收人"
+        value={target}
+        onChange={setTarget}
+        options={options}
+      />
+    </Modal>
+  );
+}
+
+export function DeleteConfirmModal({ open, count, channels, onConfirm, onCancel, loading }: {
+  open: boolean; count: number; channels: number;
+  onConfirm: () => void; onCancel: () => void; loading: boolean;
+}) {
   return (
     <Modal
       open={open}
       title={<span style={{ color: palette.red }}>删除 {count} 个产品</span>}
       okText="确认删除" okButtonProps={{ danger: true, loading }}
       cancelText="取消"
-      onOk={() => onConfirm(pwd)}
+      onOk={onConfirm}
       onCancel={onCancel}
     >
       <Typography.Paragraph>
-        删除后不可恢复。请输入操作密码确认（mock 密码：<Typography.Text code>admin</Typography.Text>）。
+        删除后<b>不可恢复</b>，请确认：
       </Typography.Paragraph>
-      <Input.Password value={pwd} onChange={e => setPwd(e.target.value)} placeholder="操作密码" autoFocus />
+      <Typography.Paragraph style={{ paddingLeft: 8 }}>
+        · 将移除 {count} 个产品及其全部配置<br />
+        · 涉及 {channels} 个渠道的关联展示将失效<br />
+        · 操作将记入系统日志（操作人 + 时间），可追溯
+      </Typography.Paragraph>
     </Modal>
   );
 }

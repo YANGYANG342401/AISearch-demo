@@ -1,15 +1,15 @@
 import { Button, Dropdown, Space, Table, Tag, Tooltip, Typography } from 'antd';
 import type { ColumnsType, TablePaginationConfig } from 'antd/es/table';
-import { DeleteOutlined, DownOutlined, EditOutlined, StopOutlined } from '@ant-design/icons';
+import { DeleteOutlined, DownOutlined, EditOutlined, StopOutlined, WarningOutlined } from '@ant-design/icons';
 
 type SortOrder = 'ascend' | 'descend' | null;
 import { useState } from 'react';
 import { ChannelSpectrum } from './ChannelSpectrum';
-import type { Channel, Department, ProductRow, QueryParams } from '../types';
-import { STATUS_TEXT } from '../types';
+import type { Channel, Department, Identity, OrgGroup, ProductRow, QueryParams } from '../types';
+import { STATUS_TEXT, canOperate, isOrphan, operatingGroupOf } from '../types';
 import { palette } from '../theme';
 
-// ─── 产品列表：高密度表格，渠道光谱列，排序透传后端字段 ─────────────────
+// ─── 产品列表：高密度表格，渠道光谱列，行级权限（owner/组长/管理员）───
 
 interface Props {
   rows: ProductRow[];
@@ -21,7 +21,8 @@ interface Props {
   departments: Department[];
   selectedIds: string[];
   onSelectedIdsChange: (ids: string[]) => void;
-  isAdmin: boolean;
+  identity: Identity;
+  orgGroups: OrgGroup[];
   onEdit: (row: ProductRow, step: 1 | 2) => void;
   onViewLog: (row: ProductRow) => void;
   onDisable: (ids: string[]) => void;
@@ -32,7 +33,8 @@ const ellipsis = { ellipsis: true } as const;
 
 export function ProductTable({
   rows, total, loading, params, onParamsChange, channels, departments,
-  selectedIds, onSelectedIdsChange, isAdmin, onEdit, onViewLog, onDisable, onDelete,
+  selectedIds, onSelectedIdsChange, identity, orgGroups,
+  onEdit, onViewLog, onDisable, onDelete,
 }: Props) {
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
@@ -122,6 +124,37 @@ export function ProductTable({
       render: (v: string) => <span style={{ fontSize: 12.5 }}>{v}</span>,
     },
     {
+      title: '操作人 / 可操作', dataIndex: 'CreatedBy', width: 135, ...sorterOf('CreatedBy'),
+      render: (_, r) => {
+        const owner = r.CreatedBy ?? '';
+        const orphan = isOrphan(owner, orgGroups);
+        const leader = operatingGroupOf(owner, orgGroups)?.Leader;
+        return (
+          <div style={{ lineHeight: 1.5 }}>
+            {orphan ? (
+              <Tooltip title="原操作人已离职（无主）：其原组长仍可操作，编辑时需补充新操作员">
+                <span style={{ color: palette.amber, fontSize: 12.5 }}>
+                  <WarningOutlined style={{ marginRight: 4 }} />无主
+                </span>
+              </Tooltip>
+            ) : (
+              <span style={{
+                fontSize: 12.5, fontWeight: 600,
+                color: r.CreatedBy === identity.name ? palette.brand : palette.ink,
+              }}>
+                owner: {owner}
+              </span>
+            )}
+            <div style={{ fontSize: 11.5, color: palette.inkFaint }}>
+              {orphan
+                ? (leader ? `可操作：${leader}（原组长）` : '可操作：—（原组未知）')
+                : `可操作：${owner}${leader && leader !== owner ? ` ${leader}（组长）` : ''}`}
+            </div>
+          </div>
+        );
+      },
+    },
+    {
       title: '生命周期', dataIndex: 'StartTime', width: 165, ...sorterOf('StartTime'),
       render: (_, r) => (
         <div style={{ fontSize: 12, lineHeight: 1.5 }} className="tabular">
@@ -141,32 +174,37 @@ export function ProductTable({
     },
     {
       title: '操作', key: 'actions', width: 76, align: 'center', fixed: 'right',
-      render: (_, r) => (
-        <Space size={4}>
-          <Button type="text" size="small" icon={<EditOutlined />}
-            onClick={() => onEdit(r, 1)}
-            title="修改" style={{ color: palette.brand }} />
-          <Dropdown
-            menu={{
-              items: [
-                { key: 'log', label: '查看日志', onClick: () => onViewLog(r) },
-                {
-                  key: 'disable', label: '停用', danger: true, icon: <StopOutlined />,
-                  disabled: r.Status === 'PullOffShelves',
-                  onClick: () => onDisable([r.ID]),
-                },
-                ...(isAdmin ? [{
-                  key: 'delete', label: '删除', danger: true, icon: <DeleteOutlined />,
-                  onClick: () => onDelete([r.ID]),
-                }] : []),
-              ],
-            }}
-            trigger={['click']}
-          >
-            <Button type="text" size="small" icon={<DownOutlined />} title="更多" />
-          </Dropdown>
-        </Space>
-      ),
+      render: (_, r) => {
+        const allowed = canOperate(r.CreatedBy ?? '', identity, orgGroups);
+        return (
+          <Space size={4}>
+            <Button type="text" size="small" icon={<EditOutlined />}
+              disabled={!allowed}
+              onClick={() => onEdit(r, 1)}
+              title={allowed ? '修改' : '仅操作人/组长/管理员可修改'} style={{ color: allowed ? palette.brand : undefined }} />
+            <Dropdown
+              menu={{
+                items: [
+                  { key: 'log', label: '查看日志', onClick: () => onViewLog(r) },
+                  {
+                    key: 'disable', label: '停用', danger: true, icon: <StopOutlined />,
+                    disabled: !allowed || r.Status === 'PullOffShelves',
+                    onClick: () => onDisable([r.ID]),
+                  },
+                  {
+                    key: 'delete', label: '删除', danger: true, icon: <DeleteOutlined />,
+                    disabled: !allowed,
+                    onClick: () => onDelete([r.ID]),
+                  },
+                ],
+              }}
+              trigger={['click']}
+            >
+              <Button type="text" size="small" icon={<DownOutlined />} title="更多" />
+            </Dropdown>
+          </Space>
+        );
+      },
     },
   ];
 
