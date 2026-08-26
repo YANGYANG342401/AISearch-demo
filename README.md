@@ -1,42 +1,61 @@
-# musearch-admin-next
+# 东航电商搜索管理平台（改版前端）
 
-东航电商搜索后台 · 产品库-产品管理 改版前端。
+React 19 + TypeScript + Vite + Ant Design 6。Mock 数据驱动，API 层与真实接口同签名，一处开关切换。
 
 ## 运行
 
 ```bash
 npm install
-npm run dev -- --port 5199   # http://localhost:5199
+npm run dev -- --host 0.0.0.0 --port 5199   # http://localhost:5199，--host 后局域网可访问
 ```
 
-## 数据来源切换
+右上角身份切换器可切三种视角：杨阳（组员）/ 张三（组长）/ 管理员——用于演示行级权限差异。
 
-`src/api/index.ts` 中 `USE_MOCK`：
+## 功能结构
 
-- `true`（默认）：内存 mock，种子数据来自 UAT 真实响应样本（`src/api/fixtures.ts`）。
-  删除操作密码为 `admin`；导出会真实生成 CSV 下载。
-- `false`：直连 UAT 真实接口（同签名客户端已实现）。需在 `vite.config.ts` 配代理：
+```
+搜索数据
+ ├ 搜索数据看板        iframe 嵌入自包含看板（public/dashboard/index.html）
+ ├ 预设搜索词配置      默认库+五端覆盖 / 时间窗自动上下线 / 直跳词 / 手机实时预览
+ └ 未命中搜索词        周度 TOP5 汇总 / 邮件通知业务与产品部门
+搜索内容
+ ├ 产品配置            产品库 CRUD + 两步式抽屉（基础信息→渠道配置）
+ └ 活动配置            活动库 CRUD（权限原则与产品一致）
+配置管理               仅管理员可配置（其他角色只读）
+ ├ 产品组管理          组织结构：组长/组员/离职档案 —— 权限锚点
+ ├ 业务部门管理        业务归属字典
+ ├ 渠道管理            渠道 + 模板类型绑定
+ └ 项目经理管理        外部技术部门人员名录
+系统
+ └ 系统日志            全局操作留痕（条目日志 = 按 TargetID 过滤）
+```
+
+## 权限模型（核心）
+
+- **权限链**：owner（创建人）→ 其组长（含离职成员的原组长）→ 管理员（仅应急）
+- 行级权限：编辑/停用/删除/转让 限 owner/组长/管理员；无权限按钮置灰
+- **批量安全**：无批量删除；批量停用仅限自己名下；删除逐条强确认
+- **导出**：勾选导出，限有操作权限的条目；管理员全选 = 全量
+- **转让**：抽屉 03 归属区发起，接收人（及其组长）成为操作人
+- **无主条目**：owner 离职（移入离职档案）→ ⚠ 标记 + 原组长可操作 + 编辑时强制补操作员
+- **身份带出**：新建时产品经理=本人、产品组=本组，锁定（管理员可调）
+
+详见《开发交接文档-搜索后台改版.md》第二章。
+
+## 代码结构
+
+- `src/types.ts` — 领域模型 + 权限函数（canOperate/isOrphan/effectivePresetWords 等）
+- `src/api/` — `index.ts`（ApiClient 接口 + USE_MOCK 开关 + realApi）、`mockApi.ts`、`fixtures.ts`（UAT 真实样本种子，人名已脱敏）
+- `src/pages/` — 各页面（ProductManagement / ActivityManagement / PresetWords / MissedWords / OrgPage / ConfigPages / SystemLog / SearchDashboard）
+- `src/components/` — ProductDrawer（两步抽屉+转让+删除确认）、ActivityDrawer、ChannelPicker/ChannelSpectrum（渠道光谱）、ProductTable、FilterBar
+- `src/theme.ts` — 夜航蓝设计 token（AntD ConfigProvider）
+
+## 切换真实接口
+
+`src/api/index.ts` 中 `USE_MOCK = false`，并在 `vite.config.ts` 配代理：
 
 ```ts
 server: { proxy: { '/api': { target: 'http://ecsearch-admin2.uat.k8s.ec', changeOrigin: true } } }
 ```
 
-## 结构
-
-- `src/types.ts` — 领域类型与渠道分族（渠道光谱）
-- `src/api/` — ApiClient 接口 + mock 实现 + 真实客户端
-- `src/components/` — ChannelSpectrum（行内渠道微标）、ChannelPicker（分组多选）、
-  FilterBar、ProductTable、ProductDrawer（两步式：基础信息 → 渠道配置）
-- `src/pages/ProductManagement.tsx` — 列表页编排（筛选/分页/批量操作/权限）
-- `src/theme.ts` — 夜航蓝设计 token（AntD ConfigProvider）
-
-## 行为对齐说明
-
-- 修改保存后进入渠道配置步骤（同原版）；删除需操作密码；停用批量确认；
-  工具栏按 featureCode 权限码渲染；管理员开关在页头。
-- 渠道配置的模板表单为简化演示版，完整模板结构见
-  `~/musearch-recon/template_{pc,mobile,api,other}.html`。
-
-## 需求文档
-
-接口契约与页面行为清单：`~/musearch-recon/产品管理模块规格文档.md`
+未对接的真实接口以 `throw new Error('真实接口待对接：…')` 占位，清单见交接文档第四章。
