@@ -32,6 +32,11 @@ export interface Activity {
   DepartmentName?: string;
   ProjectManager: string;
   Remark?: string;
+  /** H5 通用落地页（M站/小程序/PC 用）；APP 原生页见 NativePage */
+  LandingUrl?: string;
+  LandingIconUrl?: string;
+  /** APP 三端（iOS/安卓/鸿蒙）原生页配置：共用 + 覆盖 */
+  NativePage?: { Parent: { Link: string; IconUrl: string }; Overrides: Partial<Record<OsKey, { Link: string; IconUrl: string }>> };
   CreateTime: string;
   LastUpdateTime: string;
   IsDeleted?: boolean;
@@ -76,6 +81,11 @@ export const PRESET_SCOPE_TEXT: Record<PresetScope, string> = {
   alipay: '支付宝小程序',
   pc: 'PC（国内官网）',
 };
+
+// ─── 原生页三端：iOS / 安卓 / 鸿蒙（链接与图标可能不一致）───────────
+
+export const OS_KEYS = ['iOS', '安卓', '鸿蒙'] as const;
+export type OsKey = (typeof OS_KEYS)[number];
 
 export interface PresetWord {
   ID: string;

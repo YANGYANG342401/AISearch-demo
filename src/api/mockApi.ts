@@ -88,6 +88,12 @@ let activityStore: Activity[] = (() => {
       DepartmentName: d?.Name ?? '',
       ProjectManager: pms[i % pms.length] ?? '',
       Remark: '',
+      LandingUrl: i % 3 === 0 ? `https://m.ceair.com/act/act${i}` : '',
+      LandingIconUrl: i % 3 === 0 ? `https://cdn.ceair.com/icon/act${i}.png` : '',
+      NativePage: i === 0 ? {
+        Parent: { Link: 'ceairapp://activity/double11', IconUrl: 'https://cdn.ceair.com/icon/d11.png' },
+        Overrides: { 安卓: { Link: 'ceairapp://activity/double11?os=android', IconUrl: 'https://cdn.ceair.com/icon/d11-android.png' } },
+      } : undefined,
       CreateTime: '2026-06-15 10:00:00',
       LastUpdateTime: '2026-08-01 09:00:00',
       IsDeleted: false,

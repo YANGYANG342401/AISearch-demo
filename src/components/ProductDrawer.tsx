@@ -1,11 +1,13 @@
 import {
-  Button, Col, DatePicker, Divider, Drawer, Form, Input, Modal,
+  App, Button, Col, DatePicker, Divider, Drawer, Form, Input, Modal,
   Radio, Row, Select, Space, Steps, Switch, Tabs, Typography, message,
 } from 'antd';
 import { CheckOutlined } from '@ant-design/icons';
 import dayjs, { type Dayjs } from 'dayjs';
 import { useEffect, useMemo, useState } from 'react';
 import { ChannelPickerFormBlock } from './ChannelPicker';
+import type { OsKey } from '../types';
+import { OS_KEYS } from '../types';
 import type {
   Channel, Department, Identity, OrgGroup, ProductRow,
 } from '../types';
@@ -119,6 +121,7 @@ function SectionTitle({ n, children }: { n: string; children: React.ReactNode })
 }
 
 export function ProductDrawer({ open, mode, initStep, product, options, identity, onClose, onSave, onTransfer }: Props) {
+  const { modal } = App.useApp();
   const [form] = Form.useForm<FormValues>();
   const [step, setStep] = useState<1 | 2>(initStep);
   const [saving, setSaving] = useState(false);
@@ -192,8 +195,46 @@ export function ProductDrawer({ open, mode, initStep, product, options, identity
   };
 
   const finishStep2 = () => {
-    message.success('渠道配置已保存');
-    onClose();
+    // 提交检查：某端标了自定义但配置与共用模板完全相同 → 提醒改回跟随共用
+    const redundant: OsKey[] = [];
+    for (const [,cfg] of Object.entries(channelConfigs)) {
+      const native = (cfg as ChannelConfig).Native;
+      if (!native) continue;
+      for (const os of OS_KEYS) {
+        if (native.Overrides[os] && sameConfig(native.Overrides[os], native.Parent)) redundant.push(os);
+      }
+    }
+    const close = () => {
+      message.success('渠道配置已保存');
+      onClose();
+    };
+    if (redundant.length) {
+      const osText = [...new Set(redundant)].map(os => OS_LABEL[os]).join('、');
+      modal.confirm({
+        title: `${osText} 的配置与共用模板完全相同`,
+        content: '该端当前标记为"自定义"，但所有字段与共用模板一致。建议改回跟随共用模板，数据更干净；如确属有意为之可保留。',
+        okText: '改回跟随共用',
+        cancelText: '保留自定义',
+        onOk: () => {
+          setChannelConfigs(prev => {
+            const next = { ...prev };
+            for (const [cid, cfg] of Object.entries(next)) {
+              const native = (cfg as ChannelConfig).Native;
+              if (!native) continue;
+              const overrides = { ...native.Overrides };
+              for (const os of new Set(redundant)) delete overrides[os];
+              next[cid] = { ...(cfg as ChannelConfig), Native: { ...native, Overrides: overrides } };
+            }
+            return next;
+          });
+          message.success('已改回跟随共用模板');
+          onClose();
+        },
+        onCancel: close,
+      });
+      return;
+    }
+    close();
   };
 
   const selectedChannels = useMemo(
@@ -456,6 +497,11 @@ export interface ChannelConfig {
   Keyword: string;
   MusearchShow: boolean;
   Remark: string;
+  /** APP-中文：三端（iOS/安卓/鸿蒙）整表单配置——所有字段都可能分端不同 */
+  Native?: {
+    Parent: ChannelConfig;
+    Overrides: Partial<Record<OsKey, ChannelConfig>>;
+  };
 }
 
 function ChannelConfigStep({ product, channels, configs, onConfigsChange, activeKey, onActiveChange }: {
@@ -515,16 +561,143 @@ function ChannelConfigStep({ product, channels, configs, onConfigsChange, active
   );
 }
 
+function ChannelFieldsForm({ v, onChange, fieldPrefix }: {
+  v: Partial<ChannelConfig>;
+  onChange: (p: Partial<ChannelConfig>) => void;
+  fieldPrefix: string;
+}) {
+  // 渠道完整字段组：产品名 / 原生页地址 / 图标 / 关联词 / 大搜展示 / 备注
+  void fieldPrefix;
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+      <div>
+        <Typography.Text type="secondary" style={{ fontSize: 12 }}>渠道内产品名</Typography.Text>
+        <Input size="small" placeholder="若无单独名称则不填写"
+          value={v.ChannelProductName ?? ''} onChange={e => onChange({ ChannelProductName: e.target.value })} />
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+        <div>
+          <Typography.Text type="secondary" style={{ fontSize: 12 }}>原生页地址</Typography.Text>
+          <Input size="small" placeholder="原生页路由或 scheme"
+            value={v.Link ?? ''} onChange={e => onChange({ Link: e.target.value })} />
+        </div>
+        <div>
+          <Typography.Text type="secondary" style={{ fontSize: 12 }}>图标地址</Typography.Text>
+          <Input size="small" placeholder="图标 URL"
+            value={v.IconUrl ?? ''} onChange={e => onChange({ IconUrl: e.target.value })} />
+        </div>
+      </div>
+      <div>
+        <Typography.Text type="secondary" style={{ fontSize: 12 }}>渠道关联词</Typography.Text>
+        <Input.TextArea size="small" rows={2} placeholder="留空则继承全渠道关联词"
+          value={v.Keyword ?? ''} onChange={e => onChange({ Keyword: e.target.value })} />
+      </div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        <Typography.Text type="secondary" style={{ fontSize: 12 }}>对大搜展示</Typography.Text>
+        <Switch size="small"
+          checked={v.MusearchShow ?? true}
+          onChange={b => onChange({ MusearchShow: b })}
+          checkedChildren="展示" unCheckedChildren="不展示" />
+      </div>
+      <div>
+        <Typography.Text type="secondary" style={{ fontSize: 12 }}>渠道备注</Typography.Text>
+        <Input.TextArea size="small" rows={2}
+          value={v.Remark ?? ''} onChange={e => onChange({ Remark: e.target.value })} />
+      </div>
+    </div>
+  );
+}
+
+const EMPTY_CHANNEL_CONFIG: ChannelConfig = {
+  ChannelProductName: '', Link: '', IconUrl: '', Keyword: '', MusearchShow: true, Remark: '',
+};
+
+const OS_LABEL: Record<OsKey, string> = { iOS: 'iOS', 安卓: '安卓', 鸿蒙: '鸿蒙' };
+
+function sameConfig(a: ChannelConfig | undefined, b: ChannelConfig | undefined): boolean {
+  if (!a || !b) return false;
+  return (a.ChannelProductName ?? '') === (b.ChannelProductName ?? '')
+    && (a.Link ?? '') === (b.Link ?? '')
+    && (a.IconUrl ?? '') === (b.IconUrl ?? '')
+    && (a.Keyword ?? '') === (b.Keyword ?? '')
+    && (a.MusearchShow ?? true) === (b.MusearchShow ?? true)
+    && (a.Remark ?? '') === (b.Remark ?? '');
+}
+
 function ChannelTemplateForm({ channel, value, onChange }: {
   channel: Channel;
   value: ChannelConfig | undefined;
   onChange: (p: Partial<ChannelConfig>) => void;
 }) {
-  const v: ChannelConfig = value ?? {
-    ChannelProductName: '', Link: '', IconUrl: '', Keyword: '', MusearchShow: true, Remark: '',
-  };
+  const v: ChannelConfig = value ?? { ...EMPTY_CHANNEL_CONFIG };
   const isApi = channel.TemplateName === 'API';
   const isMobile = channel.TemplateName === '移动端';
+  const isAppCN = channel.Name === 'APP-中文';
+
+  if (isAppCN) {
+    // APP-中文：所有字段都可能分端不同 → 共用模板 + iOS/安卓/鸿蒙 整表单覆盖
+    const native = v.Native ?? { Parent: { ...v }, Overrides: {} };
+    const setNative = (nv: NonNullable<ChannelConfig['Native']>) => onChange({ Native: nv });
+    const toggleOs = (os: OsKey, follow: boolean) => {
+      if (follow) {
+        const next = { ...native.Overrides };
+        delete next[os];
+        setNative({ ...native, Overrides: next });
+      } else {
+        setNative({ ...native, Overrides: { ...native.Overrides, [os]: { ...native.Parent } } });
+      }
+    };
+    return (
+      <div>
+        <div style={{
+          border: `1px solid ${palette.line}`, borderRadius: 8, padding: '12px 14px',
+          background: '#FAFBFD', marginBottom: 12,
+        }}>
+          <Typography.Text strong style={{ fontSize: 13 }}>共用模板（三端一致时只填这份）</Typography.Text>
+          <div style={{ marginTop: 10 }}>
+            <ChannelFieldsForm
+              v={native.Parent}
+              onChange={p => setNative({ ...native, Parent: { ...native.Parent, ...p } })}
+              fieldPrefix="parent"
+            />
+          </div>
+        </div>
+        {OS_KEYS.map(os => {
+          const ov = native.Overrides[os];
+          return (
+            <div key={os} style={{
+              border: `1px solid ${ov ? palette.brand : palette.line}`,
+              borderRadius: 8, padding: '10px 14px', marginBottom: 10,
+              background: ov ? '#F6F8FC' : '#fff',
+            }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: ov ? 10 : 0 }}>
+                <Space size={8}>
+                  <Typography.Text strong style={{ fontSize: 13 }}>{OS_LABEL[os]}</Typography.Text>
+                  <Typography.Text type="secondary" style={{ fontSize: 11.5 }}>
+                    {ov ? '自定义（与共用模板差异配置）' : '跟随共用模板'}
+                  </Typography.Text>
+                </Space>
+                <Space size={6}>
+                  <Typography.Text type="secondary" style={{ fontSize: 11.5 }}>与共用一致</Typography.Text>
+                  <Switch size="small" checked={!ov} onChange={val => toggleOs(os, val)} />
+                </Space>
+              </div>
+              {ov && (
+                <ChannelFieldsForm
+                  v={ov}
+                  onChange={p => setNative({
+                    ...native,
+                    Overrides: { ...native.Overrides, [os]: { ...ov, ...p } },
+                  })}
+                  fieldPrefix={os}
+                />
+              )}
+            </div>
+          );
+        })}
+      </div>
+    );
+  }
 
   return (
     <Form layout="vertical" style={{ maxWidth: 460 }}>
@@ -539,7 +712,7 @@ function ChannelTemplateForm({ channel, value, onChange }: {
         />
       </Form.Item>
       {!isApi && (
-        <Form.Item label="图标地址" extra={isMobile ? '移动端按 安卓 / iOS / 鸿蒙 分别上传' : undefined}>
+        <Form.Item label="图标地址">
           <Input value={v.IconUrl} onChange={e => onChange({ IconUrl: e.target.value })} placeholder="图标 URL 或点击上传" />
         </Form.Item>
       )}

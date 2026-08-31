@@ -6,6 +6,7 @@ import { CheckOutlined } from '@ant-design/icons';
 import dayjs, { type Dayjs } from 'dayjs';
 import { useEffect, useState } from 'react';
 import { ChannelPickerFormBlock } from './ChannelPicker';
+import { DEFAULT_NATIVE_STATE, NativePageConfigurator, type NativePageState } from './NativePageConfigurator';
 import type { Activity, Channel, Department, Identity, OrgGroup } from '../types';
 import { ACTIVITY_STATUS_TEXT, canOperate, isOrphan } from '../types';
 import { palette } from '../theme';
@@ -43,6 +44,9 @@ type FormValues = {
   DepartmentID: string;
   ProjectManager: string;
   NewOperator?: string;
+  LandingUrl: string;
+  LandingIconUrl: string;
+  NativePage: NativePageState;
   Remark: string;
 };
 
@@ -52,6 +56,7 @@ function toValues(a: Activity | null, identity: Identity): FormValues {
     range: [dayjs('2026-09-01 00:00:00'), dayjs('2026-10-31 23:59:59')],
     Description: '', Keyword: '', ChannelID: [], OtherChannelDesc: '',
     DepartmentID: '', ProjectManager: identity.isAdmin ? '' : identity.name,
+    LandingUrl: '', LandingIconUrl: '', NativePage: DEFAULT_NATIVE_STATE,
     Remark: '',
   };
   return {
@@ -65,6 +70,9 @@ function toValues(a: Activity | null, identity: Identity): FormValues {
     OtherChannelDesc: a.OtherChannelDesc ?? '',
     DepartmentID: a.DepartmentID ?? '',
     ProjectManager: a.ProjectManager ?? '',
+    LandingUrl: a.LandingUrl ?? '',
+    LandingIconUrl: a.LandingIconUrl ?? '',
+    NativePage: a.NativePage ?? DEFAULT_NATIVE_STATE,
     Remark: a.Remark ?? '',
   };
 }
@@ -114,6 +122,9 @@ export function ActivityDrawer({ open, mode, activity, options, identity, onClos
         OtherChannelDesc: v.OtherChannelDesc ?? '',
         DepartmentID: v.DepartmentID,
         ProjectManager: v.ProjectManager ?? '',
+        LandingUrl: v.LandingUrl.trim(),
+        LandingIconUrl: v.LandingIconUrl.trim(),
+        NativePage: v.NativePage,
         Remark: v.Remark ?? '',
         CreateTime: activity?.CreateTime ?? '',
         LastUpdateTime: activity?.LastUpdateTime ?? '',
@@ -202,8 +213,37 @@ export function ActivityDrawer({ open, mode, activity, options, identity, onClos
         </Form.Item>
 
         <Divider style={{ margin: '4px 0 16px' }} />
+        <SectionTitle n="03">落地页与图标</SectionTitle>
+        <Row gutter={16}>
+          <Col span={12}>
+            <Form.Item name="LandingUrl" label="通用落地页（H5）"
+              extra="M站 / 小程序 / PC 使用；APP 原生页在下方配置">
+              <Input placeholder="https://m.ceair.com/act/…" />
+            </Form.Item>
+          </Col>
+          <Col span={12}>
+            <Form.Item name="LandingIconUrl" label="通用图标">
+              <Input placeholder="图标 URL" />
+            </Form.Item>
+          </Col>
+          <Col span={24}>
+            <Form.Item label="APP 原生页（iOS / 安卓 / 鸿蒙）"
+              extra="原生页面地址与图标可能各端不同：三端一致只填共用，某端不同关掉该端'与共用一致'改差异字段">
+              <Form.Item noStyle shouldUpdate={(a, b) => a.NativePage !== b.NativePage}>
+                {({ getFieldValue, setFieldsValue }) => (
+                  <NativePageConfigurator
+                    value={getFieldValue('NativePage') ?? DEFAULT_NATIVE_STATE}
+                    onChange={nv => setFieldsValue({ NativePage: nv })}
+                  />
+                )}
+              </Form.Item>
+            </Form.Item>
+          </Col>
+        </Row>
+
+        <Divider style={{ margin: '4px 0 16px' }} />
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <SectionTitle n="03">归属</SectionTitle>
+          <SectionTitle n="04">归属</SectionTitle>
           {mode === 'edit' && activity && onTransfer
             && canOperate(activity.CreatedBy ?? '', identity, options.orgGroups)
             && !isOrphan(activity.CreatedBy ?? '', options.orgGroups) && (
@@ -250,7 +290,7 @@ export function ActivityDrawer({ open, mode, activity, options, identity, onClos
         </Row>
 
         <Divider style={{ margin: '4px 0 16px' }} />
-        <SectionTitle n="04">补充</SectionTitle>
+        <SectionTitle n="05">补充</SectionTitle>
         <Form.Item name="Remark" label="备注">
           <Input.TextArea rows={2} />
         </Form.Item>
